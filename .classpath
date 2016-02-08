@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<classpath>
+	<classpathentry kind="src" path="src"/>
+	<classpathentry kind="src" path="antlr4"/>
+	<classpathentry kind="con" path="org.eclipse.jdt.launching.JRE_CONTAINER"/>
+	<classpathentry kind="lib" path="bcel-6.0-20150726.222224-123.jar" sourcepath="bcel-6.0-20150726.222224-123-source.zip"/>
+	<classpathentry kind="lib" path="antlr-4.4-complete.jar"/>
+	<classpathentry kind="output" path="bin"/>
+</classpath>
