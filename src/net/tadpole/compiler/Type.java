@@ -22,4 +22,19 @@ public class Type
 	{
 		return typeName.endsWith("[]");
 	}
+	
+	public boolean isAbsoluteType()
+	{
+		return typeName.contains(".");
+	}
+	
+	public Type getAbsoluteType(String moduleIfRelative)
+	{
+		return isAbsoluteType() ? this : new Type(moduleIfRelative + "." + typeName);
+	}
+	
+	public Type fromStruct(Struct struct)
+	{
+		return new Type(struct.moduleName + "." + struct.name);
+	}
 }

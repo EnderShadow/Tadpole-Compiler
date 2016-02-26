@@ -65,7 +65,7 @@ public abstract class Expression
 			else if(context.StringLiteral() != null)
 				return new LiteralExpression.StringLiteral(context.StringLiteral().getText());
 			else if(context.NoneLiteral() != null)
-				return LiteralExpression.NONE;
+				return LiteralExpression.NoneLiteral.NONE;
 			else if(context.arrayLiteral() != null)
 				return new LiteralExpression.ArrayLiteral(context.arrayLiteral());
 			throw new CompilationException("Unknown literal: " + context.getText());

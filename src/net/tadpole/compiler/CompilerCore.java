@@ -18,6 +18,7 @@ import java.util.stream.Collectors;
 import javafx.util.Pair;
 import net.tadpole.compiler.ast.*;
 import net.tadpole.compiler.ast.Expression.*;
+import net.tadpole.compiler.ast.LiteralExpression.*;
 import net.tadpole.compiler.exceptions.CompilationException;
 import net.tadpole.compiler.parser.TadpoleLexer;
 import net.tadpole.compiler.parser.TadpoleParser;
@@ -46,19 +47,29 @@ public class CompilerCore
 		if(args.length < 1)
 			throw new IllegalArgumentException("Invalid number of arguments");
 		
-		String filename = args[0];
-		String fileData = new BufferedReader(new FileReader(new File(filename))).lines().collect(Collectors.joining("\n"));
-		
-		TadpoleLexer lexer = new TadpoleLexer(new ANTLRInputStream(fileData));
-		CommonTokenStream tokens = new CommonTokenStream(lexer);
-		TadpoleParser parser = new TadpoleParser(tokens);
-		FileContext mc = parser.file();
-		
-		ParseTreeWalker walker = new ParseTreeWalker();
-		TadpoleListener listener = new TadpoleListener();
-		walker.walk(listener, mc);
-		FileNode fileNode = listener.getRoot();
-		simplifyNodes(fileNode);
+		for(int i = 0; i < args.length; i++)
+		{
+			String filename = args[i];
+			String fileData = new BufferedReader(new FileReader(new File(filename))).lines().collect(Collectors.joining("\n"));
+			
+			TadpoleLexer lexer = new TadpoleLexer(new ANTLRInputStream(fileData));
+			CommonTokenStream tokens = new CommonTokenStream(lexer);
+			TadpoleParser parser = new TadpoleParser(tokens);
+			FileContext mc = parser.file();
+			
+			String moduleName = filename.substring(0, filename.length() - 8);
+			ParseTreeWalker walker = new ParseTreeWalker();
+			TadpoleListener listener = new TadpoleListener(moduleName);
+			walker.walk(listener, mc);
+			FileNode fileNode = listener.getRoot();
+			simplifyNodes(fileNode);
+			List<Struct> structs = Struct.registerStructs(fileNode);
+			List<String> imports = fileNode.getChildren().stream().filter(n -> n instanceof ImportNode).map(n -> ((ImportNode) n).moduleName).collect(Collectors.toList());
+			List<Function> functions = fileNode.getChildren().stream().filter(n -> n instanceof FunctionDecNode).map(n -> new Function((FunctionDecNode) n)).collect(Collectors.toList());
+			List<Statement> statements = fileNode.getChildren().stream().filter(n -> n instanceof StatementNode).map(n -> new Statement((StatementNode) n)).collect(Collectors.toList());
+			Module module = new Module(moduleName, structs, imports, functions, statements);
+			
+		}
 		
 		List<ModuleNode> modules = roots.stream().map(Pair::getValue).collect(Collectors.toList());
 		LibLoader.loadLibraries();
@@ -377,6 +388,454 @@ public class CompilerCore
 			BinaryExpression be = (BinaryExpression) expression;
 			Expression exprLeft = simplifyExpression(be.exprLeft);
 			Expression exprRight = simplifyExpression(be.exprRight);
+			if(be.op.toString().contains("ASSIGN"))
+			{
+				// uncomment if binary expressions become valid on the left side for assignment
+				if(!(/*exprLeft instanceof BinaryExpression || */exprLeft instanceof PrimaryExpression.ArrayAccessExpression || exprLeft instanceof PrimaryExpression.FieldAccessExpression))
+					throw new CompilationException("Cannot have expression of type " + exprLeft.getClass() + " on left side of assignment expression");
+				if(be.op.toString().contains("_ASSIGN") && be.op != BinaryOp.PARALLEL_ASSIGN)
+					exprRight = simplifyExpression(new BinaryExpression(exprLeft, BinaryOp.valueOf(be.op.toString().substring(0, be.op.toString().length() - 7)), exprRight));
+				
+				// uncomment if binary expressions become valid on the left side for assignment
+				if(/*findParallelAssign(exprLeft) || */findParallelAssign(exprRight))
+					throw new CompilationException("Cannot have the parallel assignment operator in a sub-expression");
+				return new BinaryExpression(exprLeft, be.op == BinaryOp.PARALLEL_ASSIGN ? BinaryOp.PARALLEL_ASSIGN : BinaryOp.ASSIGN, exprRight);
+			}
+			
+			switch(be.op)
+			{
+			case POWER:
+				if(exprLeft instanceof NumberLiteral && exprRight instanceof NumberLiteral)
+				{
+					NumberLiteral left = (NumberLiteral) exprLeft;
+					NumberLiteral right = (NumberLiteral) exprRight;
+					return new LiteralExpression.FloatLiteral(Math.pow(left.asDouble(), right.asDouble()), true);
+				}
+				break;
+			case MULTIPLY:
+				if(exprLeft instanceof NumberLiteral && exprRight instanceof NumberLiteral)
+				{
+					if(exprLeft.getClass().equals(exprRight.getClass()))
+					{
+						if(exprLeft instanceof IntLiteral)
+						{
+							IntLiteral left = (IntLiteral) exprLeft;
+							IntLiteral right = (IntLiteral) exprRight;
+							return new IntLiteral(left.value * right.value, left.wide || right.wide);
+						}
+						else if(exprLeft instanceof FloatLiteral)
+						{
+							FloatLiteral left = (FloatLiteral) exprLeft;
+							FloatLiteral right = (FloatLiteral) exprRight;
+							return new FloatLiteral(left.value * right.value, left.wide || right.wide);
+						}
+						else if(exprLeft instanceof CharacterLiteral)
+						{
+							CharacterLiteral left = (CharacterLiteral) exprLeft;
+							CharacterLiteral right = (CharacterLiteral) exprRight;
+							return new IntLiteral(left.value * right.value, false);
+						}
+						
+						throw new CompilationException("Unknown number literal of class: " + exprLeft.getClass());
+					}
+					else
+					{
+						if(exprLeft instanceof FloatLiteral || exprRight instanceof FloatLiteral)
+						{
+							boolean wide = exprLeft instanceof FloatLiteral ? ((FloatLiteral) exprLeft).wide : ((FloatLiteral) exprRight).wide;
+							NumberLiteral left = (NumberLiteral) exprLeft;
+							NumberLiteral right = (NumberLiteral) exprRight;
+							return new FloatLiteral(left.asDouble() * right.asDouble(), wide);
+						}
+						boolean wide = exprLeft instanceof IntLiteral ? ((IntLiteral) exprLeft).wide : ((IntLiteral) exprRight).wide;
+						NumberLiteral left = (NumberLiteral) exprLeft;
+						NumberLiteral right = (NumberLiteral) exprRight;
+						return new IntLiteral(left.asInt() * right.asInt(), wide);
+					}
+				}
+				else if(exprLeft instanceof StringLiteral && exprRight instanceof NumberLiteral && ((NumberLiteral) exprRight).isInt())
+				{
+					String str = ((StringLiteral) exprLeft).value;
+					long value = ((NumberLiteral) exprRight).asInt();
+					StringBuilder sb = new StringBuilder((int) (str.length() * value));
+					while(value-- > 0)
+						sb.append(str);
+					return new StringLiteral(sb.toString());
+				}
+				else if(exprLeft instanceof NumberLiteral && ((NumberLiteral) exprLeft).isInt() && exprRight instanceof StringLiteral)
+				{
+					String str = ((StringLiteral) exprRight).value;
+					long value = ((NumberLiteral) exprLeft).asInt();
+					StringBuilder sb = new StringBuilder((int) (str.length() * value));
+					while(value-- > 0)
+						sb.append(str);
+					return new StringLiteral(sb.toString());
+				}
+				break;
+			case DIVIDE:
+				if(exprLeft instanceof NumberLiteral && exprRight instanceof NumberLiteral)
+				{
+					if(exprLeft.getClass().equals(exprRight.getClass()))
+					{
+						if(exprLeft instanceof IntLiteral)
+						{
+							IntLiteral left = (IntLiteral) exprLeft;
+							IntLiteral right = (IntLiteral) exprRight;
+							return new IntLiteral(left.value / right.value, left.wide || right.wide);
+						}
+						else if(exprLeft instanceof FloatLiteral)
+						{
+							FloatLiteral left = (FloatLiteral) exprLeft;
+							FloatLiteral right = (FloatLiteral) exprRight;
+							return new FloatLiteral(left.value / right.value, left.wide || right.wide);
+						}
+						else if(exprLeft instanceof CharacterLiteral)
+						{
+							CharacterLiteral left = (CharacterLiteral) exprLeft;
+							CharacterLiteral right = (CharacterLiteral) exprRight;
+							return new IntLiteral(left.value / right.value, false);
+						}
+						
+						throw new CompilationException("Unknown number literal of class: " + exprLeft.getClass());
+					}
+					else
+					{
+						if(exprLeft instanceof FloatLiteral || exprRight instanceof FloatLiteral)
+						{
+							boolean wide = exprLeft instanceof FloatLiteral ? ((FloatLiteral) exprLeft).wide : ((FloatLiteral) exprRight).wide;
+							NumberLiteral left = (NumberLiteral) exprLeft;
+							NumberLiteral right = (NumberLiteral) exprRight;
+							return new FloatLiteral(left.asDouble() / right.asDouble(), wide);
+						}
+						boolean wide = exprLeft instanceof IntLiteral ? ((IntLiteral) exprLeft).wide : ((IntLiteral) exprRight).wide;
+						NumberLiteral left = (NumberLiteral) exprLeft;
+						NumberLiteral right = (NumberLiteral) exprRight;
+						return new IntLiteral(left.asInt() / right.asInt(), wide);
+					}
+				}
+				break;
+			case MODULUS:
+				if(exprLeft instanceof NumberLiteral && exprRight instanceof NumberLiteral)
+				{
+					if(exprLeft.getClass().equals(exprRight.getClass()))
+					{
+						if(exprLeft instanceof IntLiteral)
+						{
+							IntLiteral left = (IntLiteral) exprLeft;
+							IntLiteral right = (IntLiteral) exprRight;
+							return new IntLiteral(left.value % right.value, left.wide || right.wide);
+						}
+						else if(exprLeft instanceof FloatLiteral)
+						{
+							FloatLiteral left = (FloatLiteral) exprLeft;
+							FloatLiteral right = (FloatLiteral) exprRight;
+							return new FloatLiteral(left.value % right.value, left.wide || right.wide);
+						}
+						else if(exprLeft instanceof CharacterLiteral)
+						{
+							CharacterLiteral left = (CharacterLiteral) exprLeft;
+							CharacterLiteral right = (CharacterLiteral) exprRight;
+							return new IntLiteral(left.value % right.value, false);
+						}
+						
+						throw new CompilationException("Unknown number literal of class: " + exprLeft.getClass());
+					}
+					else
+					{
+						if(exprLeft instanceof FloatLiteral || exprRight instanceof FloatLiteral)
+						{
+							boolean wide = exprLeft instanceof FloatLiteral ? ((FloatLiteral) exprLeft).wide : ((FloatLiteral) exprRight).wide;
+							NumberLiteral left = (NumberLiteral) exprLeft;
+							NumberLiteral right = (NumberLiteral) exprRight;
+							return new FloatLiteral(left.asDouble() % right.asDouble(), wide);
+						}
+						boolean wide = exprLeft instanceof IntLiteral ? ((IntLiteral) exprLeft).wide : ((IntLiteral) exprRight).wide;
+						NumberLiteral left = (NumberLiteral) exprLeft;
+						NumberLiteral right = (NumberLiteral) exprRight;
+						return new IntLiteral(left.asInt() % right.asInt(), wide);
+					}
+				}
+				break;
+			case ADD:
+				if(exprLeft instanceof NumberLiteral && exprRight instanceof NumberLiteral)
+				{
+					if(exprLeft.getClass().equals(exprRight.getClass()))
+					{
+						if(exprLeft instanceof IntLiteral)
+						{
+							IntLiteral left = (IntLiteral) exprLeft;
+							IntLiteral right = (IntLiteral) exprRight;
+							return new IntLiteral(left.value + right.value, left.wide || right.wide);
+						}
+						else if(exprLeft instanceof FloatLiteral)
+						{
+							FloatLiteral left = (FloatLiteral) exprLeft;
+							FloatLiteral right = (FloatLiteral) exprRight;
+							return new FloatLiteral(left.value + right.value, left.wide || right.wide);
+						}
+						else if(exprLeft instanceof CharacterLiteral)
+						{
+							CharacterLiteral left = (CharacterLiteral) exprLeft;
+							CharacterLiteral right = (CharacterLiteral) exprRight;
+							return new IntLiteral(left.value + right.value, false);
+						}
+						
+						throw new CompilationException("Unknown number literal of class: " + exprLeft.getClass());
+					}
+					else
+					{
+						if(exprLeft instanceof FloatLiteral || exprRight instanceof FloatLiteral)
+						{
+							boolean wide = exprLeft instanceof FloatLiteral ? ((FloatLiteral) exprLeft).wide : ((FloatLiteral) exprRight).wide;
+							NumberLiteral left = (NumberLiteral) exprLeft;
+							NumberLiteral right = (NumberLiteral) exprRight;
+							return new FloatLiteral(left.asDouble() + right.asDouble(), wide);
+						}
+						boolean wide = exprLeft instanceof IntLiteral ? ((IntLiteral) exprLeft).wide : ((IntLiteral) exprRight).wide;
+						NumberLiteral left = (NumberLiteral) exprLeft;
+						NumberLiteral right = (NumberLiteral) exprRight;
+						return new IntLiteral(left.asInt() + right.asInt(), wide);
+					}
+				}
+				else if(exprLeft instanceof StringLiteral && exprRight instanceof NumberLiteral)
+				{
+					String str = ((StringLiteral) exprLeft).value;
+					
+					if(exprRight instanceof CharacterLiteral)
+						return new StringLiteral(str + ((CharacterLiteral) exprRight).value);
+					
+					if(exprRight instanceof IntLiteral)
+						return new StringLiteral(str + ((IntLiteral) exprRight).value);
+					
+					// exprRight is of type FloatLiteral
+					FloatLiteral fl = (FloatLiteral) exprRight;
+					if(fl.wide)
+						return new StringLiteral(str + fl.value);
+					return new StringLiteral(str + (float) fl.value);
+				}
+				else if(exprRight instanceof StringLiteral && exprLeft instanceof NumberLiteral)
+				{
+					String str = ((StringLiteral) exprRight).value;
+					
+					if(exprLeft instanceof CharacterLiteral)
+						return new StringLiteral(str + ((CharacterLiteral) exprLeft).value);
+					
+					if(exprLeft instanceof IntLiteral)
+						return new StringLiteral(str + ((IntLiteral) exprLeft).value);
+					
+					// exprRight is of type FloatLiteral
+					FloatLiteral fl = (FloatLiteral) exprLeft;
+					if(fl.wide)
+						return new StringLiteral(str + fl.value);
+					return new StringLiteral(str + (float) fl.value);
+				}
+				break;
+			case SUBTRACT:
+				if(exprLeft instanceof NumberLiteral && exprRight instanceof NumberLiteral)
+				{
+					if(exprLeft.getClass().equals(exprRight.getClass()))
+					{
+						if(exprLeft instanceof IntLiteral)
+						{
+							IntLiteral left = (IntLiteral) exprLeft;
+							IntLiteral right = (IntLiteral) exprRight;
+							return new IntLiteral(left.value - right.value, left.wide || right.wide);
+						}
+						else if(exprLeft instanceof FloatLiteral)
+						{
+							FloatLiteral left = (FloatLiteral) exprLeft;
+							FloatLiteral right = (FloatLiteral) exprRight;
+							return new FloatLiteral(left.value - right.value, left.wide || right.wide);
+						}
+						else if(exprLeft instanceof CharacterLiteral)
+						{
+							CharacterLiteral left = (CharacterLiteral) exprLeft;
+							CharacterLiteral right = (CharacterLiteral) exprRight;
+							return new IntLiteral(left.value - right.value, false);
+						}
+						
+						throw new CompilationException("Unknown number literal of class: " + exprLeft.getClass());
+					}
+					else
+					{
+						if(exprLeft instanceof FloatLiteral || exprRight instanceof FloatLiteral)
+						{
+							boolean wide = exprLeft instanceof FloatLiteral ? ((FloatLiteral) exprLeft).wide : ((FloatLiteral) exprRight).wide;
+							NumberLiteral left = (NumberLiteral) exprLeft;
+							NumberLiteral right = (NumberLiteral) exprRight;
+							return new FloatLiteral(left.asDouble() - right.asDouble(), wide);
+						}
+						boolean wide = exprLeft instanceof IntLiteral ? ((IntLiteral) exprLeft).wide : ((IntLiteral) exprRight).wide;
+						NumberLiteral left = (NumberLiteral) exprLeft;
+						NumberLiteral right = (NumberLiteral) exprRight;
+						return new IntLiteral(left.asInt() - right.asInt(), wide);
+					}
+				}
+				break;
+			case RIGHT_SHIFT_PRESERVE:
+				if(exprLeft instanceof NumberLiteral && ((NumberLiteral) exprLeft).isInt() && exprRight instanceof NumberLiteral && ((NumberLiteral) exprRight).isInt())
+				{
+					boolean wide = exprLeft instanceof IntLiteral ? ((IntLiteral) exprLeft).wide : exprRight instanceof IntLiteral ? ((IntLiteral) exprRight).wide : false;
+					return new IntLiteral(((NumberLiteral) exprLeft).asInt() >> ((NumberLiteral) exprRight).asInt(), wide);
+				}
+				break;
+			case RIGHT_SHIFT:
+				if(exprLeft instanceof NumberLiteral && ((NumberLiteral) exprLeft).isInt() && exprRight instanceof NumberLiteral && ((NumberLiteral) exprRight).isInt())
+				{
+					boolean wide = exprLeft instanceof IntLiteral ? ((IntLiteral) exprLeft).wide : exprRight instanceof IntLiteral ? ((IntLiteral) exprRight).wide : false;
+					return new IntLiteral(((NumberLiteral) exprLeft).asInt() >>> ((NumberLiteral) exprRight).asInt(), wide);
+				}
+				break;
+			case LEFT_SHIFT:
+				if(exprLeft instanceof NumberLiteral && ((NumberLiteral) exprLeft).isInt() && exprRight instanceof NumberLiteral && ((NumberLiteral) exprRight).isInt())
+				{
+					boolean wide = exprLeft instanceof IntLiteral ? ((IntLiteral) exprLeft).wide : exprRight instanceof IntLiteral ? ((IntLiteral) exprRight).wide : false;
+					return new IntLiteral(((NumberLiteral) exprLeft).asInt() << ((NumberLiteral) exprRight).asInt(), wide);
+				}
+				break;
+			case LESS_THAN:
+				if(exprLeft instanceof NumberLiteral && exprRight instanceof NumberLiteral)
+				{
+					NumberLiteral left = (NumberLiteral) exprLeft;
+					NumberLiteral right = (NumberLiteral) exprRight;
+					return BooleanLiteral.of(left.asDouble() < right.asDouble());
+				}
+				break;
+			case GREATER_THAN:
+				if(exprLeft instanceof NumberLiteral && exprRight instanceof NumberLiteral)
+				{
+					NumberLiteral left = (NumberLiteral) exprLeft;
+					NumberLiteral right = (NumberLiteral) exprRight;
+					return BooleanLiteral.of(left.asDouble() > right.asDouble());
+				}
+				break;
+			case LESS_THAN_EQUAL:
+				if(exprLeft instanceof NumberLiteral && exprRight instanceof NumberLiteral)
+				{
+					NumberLiteral left = (NumberLiteral) exprLeft;
+					NumberLiteral right = (NumberLiteral) exprRight;
+					return BooleanLiteral.of(left.asDouble() <= right.asDouble());
+				}
+				break;
+			case GREATER_THAN_EQUAL:
+				if(exprLeft instanceof NumberLiteral && exprRight instanceof NumberLiteral)
+				{
+					NumberLiteral left = (NumberLiteral) exprLeft;
+					NumberLiteral right = (NumberLiteral) exprRight;
+					return BooleanLiteral.of(left.asDouble() >= right.asDouble());
+				}
+				break;
+			case IS:
+				// TODO implement
+				throw new CompilationException("Unimplemented binary operator");
+			case EQUALS:
+				if(exprLeft instanceof LiteralExpression && exprRight instanceof LiteralExpression)
+				{
+					if(exprLeft instanceof NumberLiteral && exprRight instanceof NumberLiteral)
+					{
+						NumberLiteral left = (NumberLiteral) exprLeft;
+						NumberLiteral right = (NumberLiteral) exprRight;
+						return BooleanLiteral.of(left.asDouble() == right.asDouble());
+					}
+					else if(exprLeft instanceof BooleanLiteral && exprRight instanceof BooleanLiteral)
+					{
+						return BooleanLiteral.of(exprLeft == exprRight);
+					}
+					else
+					{
+						if(exprLeft instanceof NoneLiteral && exprRight instanceof NoneLiteral)
+						{
+							return BooleanLiteral.TRUE;
+						}
+						else if(exprLeft instanceof ArrayLiteral && exprRight instanceof ArrayLiteral)
+						{
+							// TODO sometime in the future
+						}
+						else if(exprLeft instanceof StringLiteral && exprRight instanceof StringLiteral)
+						{
+							StringLiteral left = (StringLiteral) exprLeft;
+							StringLiteral right = (StringLiteral) exprRight;
+							return BooleanLiteral.of(left.value.equals(right.value));
+						}
+						
+						return BooleanLiteral.FALSE;
+					}
+				}
+				break;
+			case NOT_EQUAL:
+				if(exprLeft instanceof LiteralExpression && exprRight instanceof LiteralExpression)
+				{
+					if(exprLeft instanceof NumberLiteral && exprRight instanceof NumberLiteral)
+					{
+						NumberLiteral left = (NumberLiteral) exprLeft;
+						NumberLiteral right = (NumberLiteral) exprRight;
+						return BooleanLiteral.of(left.asDouble() != right.asDouble());
+					}
+					else if(exprLeft instanceof BooleanLiteral && exprRight instanceof BooleanLiteral)
+					{
+						return BooleanLiteral.of(exprLeft != exprRight);
+					}
+					else
+					{
+						if(exprLeft instanceof NoneLiteral && exprRight instanceof NoneLiteral)
+						{
+							return BooleanLiteral.FALSE;
+						}
+						else if(exprLeft instanceof ArrayLiteral && exprRight instanceof ArrayLiteral)
+						{
+							// TODO sometime in the future
+						}
+						else if(exprLeft instanceof StringLiteral && exprRight instanceof StringLiteral)
+						{
+							StringLiteral left = (StringLiteral) exprLeft;
+							StringLiteral right = (StringLiteral) exprRight;
+							return BooleanLiteral.of(!left.value.equals(right.value));
+						}
+						
+						return BooleanLiteral.TRUE;
+					}
+				}
+				break;
+			case BITWISE_AND:
+				if(exprLeft instanceof NumberLiteral && ((NumberLiteral) exprLeft).isInt() && exprRight instanceof NumberLiteral && ((NumberLiteral) exprRight).isInt())
+				{
+					boolean wide = exprLeft instanceof IntLiteral ? ((IntLiteral) exprLeft).wide : exprRight instanceof IntLiteral ? ((IntLiteral) exprRight).wide : false;
+					return new IntLiteral(((NumberLiteral) exprLeft).asInt() & ((NumberLiteral) exprRight).asInt(), wide);
+				}
+				break;
+			case XOR:
+				if(exprLeft instanceof NumberLiteral && ((NumberLiteral) exprLeft).isInt() && exprRight instanceof NumberLiteral && ((NumberLiteral) exprRight).isInt())
+				{
+					boolean wide = exprLeft instanceof IntLiteral ? ((IntLiteral) exprLeft).wide : exprRight instanceof IntLiteral ? ((IntLiteral) exprRight).wide : false;
+					return new IntLiteral(((NumberLiteral) exprLeft).asInt() ^ ((NumberLiteral) exprRight).asInt(), wide);
+				}
+				break;
+			case BITWISE_OR:
+				if(exprLeft instanceof NumberLiteral && ((NumberLiteral) exprLeft).isInt() && exprRight instanceof NumberLiteral && ((NumberLiteral) exprRight).isInt())
+				{
+					boolean wide = exprLeft instanceof IntLiteral ? ((IntLiteral) exprLeft).wide : exprRight instanceof IntLiteral ? ((IntLiteral) exprRight).wide : false;
+					return new IntLiteral(((NumberLiteral) exprLeft).asInt() | ((NumberLiteral) exprRight).asInt(), wide);
+				}
+				break;
+			case AND:
+				if(exprLeft instanceof BooleanLiteral && exprRight instanceof BooleanLiteral)
+				{
+					BooleanLiteral left = (BooleanLiteral) exprLeft;
+					BooleanLiteral right = (BooleanLiteral) exprRight;
+					return BooleanLiteral.of(left.value && right.value);
+				}
+				break;
+			case OR:
+				if(exprLeft instanceof BooleanLiteral && exprRight instanceof BooleanLiteral)
+				{
+					BooleanLiteral left = (BooleanLiteral) exprLeft;
+					BooleanLiteral right = (BooleanLiteral) exprRight;
+					return BooleanLiteral.of(left.value || right.value);
+				}
+				break;
+			}
+			
+			return new BinaryExpression(exprLeft, be.op, exprRight);
 		}
 		else if(expression instanceof PrimaryExpression)
 		{
@@ -463,6 +922,13 @@ public class CompilerCore
 								throw new CompilationException("Cannot cast floating point number to " + ce.targetType.typeName);
 							}
 						}
+						else if(expr instanceof LiteralExpression.ArrayLiteral)
+						{
+							LiteralExpression.ArrayLiteral al = (LiteralExpression.ArrayLiteral) expr;
+							for(int i = 0; i < al.literals.length; i++)
+								al.literals[i] = simplifyExpression(al.literals[i]);
+							return al;
+						}
 					}
 				}
 			}
@@ -472,6 +938,40 @@ public class CompilerCore
 			}
 			return expression;
 		}
+		
+		throw new CompilationException("Unknown expression of class " + expression.getClass());
+	}
+	
+	private static boolean findParallelAssign(Expression expr)
+	{
+		if(expr instanceof BinaryExpression)
+		{
+			BinaryExpression be = (BinaryExpression) expr;
+			return be.op == BinaryOp.PARALLEL_ASSIGN || findParallelAssign(be.exprLeft) || findParallelAssign(be.exprRight);
+		}
+		
+		if(expr instanceof UnaryExpression)
+			return findParallelAssign(((UnaryExpression) expr).expr);
+		
+		if(expr instanceof PrimaryExpression)
+		{
+			if(expr instanceof PrimaryExpression.ArrayAccessExpression)
+				return findParallelAssign(((PrimaryExpression.ArrayAccessExpression) expr).expression) || findParallelAssign(((PrimaryExpression.ArrayAccessExpression) expr).indexExpression);
+			if(expr instanceof PrimaryExpression.CastExpression)
+				return findParallelAssign(((PrimaryExpression.CastExpression) expr).expression);
+			if(expr instanceof PrimaryExpression.FieldAccessExpression)
+				return findParallelAssign(((PrimaryExpression.FieldAccessExpression) expr).expression);
+			if(expr instanceof PrimaryExpression.WrapExpression)
+				return findParallelAssign(((PrimaryExpression.WrapExpression) expr).expression);
+			if(expr instanceof PrimaryExpression.FunctionCallExpression)
+				return Arrays.stream(((PrimaryExpression.FunctionCallExpression) expr).parameters).map(CompilerCore::findParallelAssign).anyMatch(b -> b);
+			if(expr instanceof PrimaryExpression.InstantiationExpression)
+				return Arrays.stream(((PrimaryExpression.InstantiationExpression) expr).parameters).map(CompilerCore::findParallelAssign).anyMatch(b -> b);
+			
+			throw new CompilationException("Unknown primary expression of type " + expr.getClass());
+		}
+		
+		throw new CompilationException("Unknown expression of type " + expr.getClass());
 	}
 	
 	private static void copy(File source, File dest)

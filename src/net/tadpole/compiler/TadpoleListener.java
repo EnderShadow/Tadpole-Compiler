@@ -6,6 +6,7 @@ import net.tadpole.compiler.ast.ASTNode;
 import net.tadpole.compiler.ast.Expression;
 import net.tadpole.compiler.ast.FileNode;
 import net.tadpole.compiler.ast.FunctionDecNode;
+import net.tadpole.compiler.ast.ImportNode;
 import net.tadpole.compiler.ast.ParameterListNode;
 import net.tadpole.compiler.ast.ParameterNode;
 import net.tadpole.compiler.ast.StatementNode;
@@ -17,10 +18,11 @@ import net.tadpole.compiler.parser.TadpoleParser;
 public class TadpoleListener extends TadpoleBaseListener
 {
 	private Stack<ASTNode> scope = new Stack<ASTNode>();
+	private String moduleName;
 	
-	public TadpoleListener()
+	public TadpoleListener(String moduleName)
 	{
-		resetRoot();
+		resetRoot(moduleName);
 	}
 	
 	public FileNode getRoot()
@@ -34,16 +36,17 @@ public class TadpoleListener extends TadpoleBaseListener
 		return (FileNode) node;
 	}
 	
-	public void resetRoot()
+	public void resetRoot(String moduleName)
 	{
 		scope.clear();
 		scope.add(new FileNode());
+		this.moduleName = moduleName;
 	}
 	
 	@Override
 	public void enterStructDec(TadpoleParser.StructDecContext context)
 	{
-		scope.push(new StructNode(scope.peek(), context.structName().getText()));
+		scope.push(new StructNode(scope.peek(), moduleName, context.structName().getText()));
 	}
 	
 	@Override
@@ -92,5 +95,13 @@ public class TadpoleListener extends TadpoleBaseListener
 	public void enterStatement(TadpoleParser.StatementContext context)
 	{
 		new StatementNode(scope.peek(), context);
+		while(context.getChildCount() > 0)
+			context.removeLastChild();
+	}
+	
+	@Override
+	public void enterImportDec(TadpoleParser.ImportDecContext context)
+	{
+		new ImportNode(scope.peek(), context.Identifier().getText());
 	}
 }

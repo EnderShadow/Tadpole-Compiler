@@ -5,9 +5,7 @@ import net.tadpole.compiler.parser.TadpoleParser;
 
 public class LiteralExpression extends Expression.PrimaryExpression
 {
-	public static final NoneLiteral NONE = new NoneLiteral();
-	
-	public static class IntLiteral extends LiteralExpression
+	public static class IntLiteral extends LiteralExpression implements NumberLiteral
 	{
 		public final long value;
 		public final boolean wide;
@@ -57,9 +55,27 @@ public class LiteralExpression extends Expression.PrimaryExpression
 			
 			value = Long.parseLong(intLiteral, base);
 		}
+		
+		@Override
+		public double asDouble()
+		{
+			return value;
+		}
+		
+		@Override
+		public boolean isInt()
+		{
+			return true;
+		}
+		
+		@Override
+		public long asInt()
+		{
+			return value;
+		}
 	}
 	
-	public static class FloatLiteral extends LiteralExpression
+	public static class FloatLiteral extends LiteralExpression implements NumberLiteral
 	{
 		public final double value;
 		public final boolean wide;
@@ -74,6 +90,24 @@ public class LiteralExpression extends Expression.PrimaryExpression
 		{
 			value = Double.parseDouble(floatLiteral);
 			wide = floatLiteral.toLowerCase().endsWith("d");
+		}
+		
+		@Override
+		public double asDouble()
+		{
+			return value;
+		}
+		
+		@Override
+		public boolean isInt()
+		{
+			return false;
+		}
+		
+		@Override
+		public long asInt()
+		{
+			return (long) value;
 		}
 	}
 	
@@ -93,9 +127,14 @@ public class LiteralExpression extends Expression.PrimaryExpression
 		{
 			return Boolean.parseBoolean(booleanLiteral) ? TRUE : FALSE;
 		}
+		
+		public static BooleanLiteral of(boolean value)
+		{
+			return value ? TRUE : FALSE;
+		}
 	}
 	
-	public static class CharacterLiteral extends LiteralExpression
+	public static class CharacterLiteral extends LiteralExpression implements NumberLiteral
 	{
 		public final char value;
 		
@@ -138,6 +177,24 @@ public class LiteralExpression extends Expression.PrimaryExpression
 			default:
 				throw new CompilationException("Cannot escape unknown character: " + c);
 			}
+		}
+		
+		@Override
+		public double asDouble()
+		{
+			return value;
+		}
+		
+		@Override
+		public boolean isInt()
+		{
+			return true;
+		}
+		
+		@Override
+		public long asInt()
+		{
+			return value;
 		}
 	}
 	
@@ -211,6 +268,8 @@ public class LiteralExpression extends Expression.PrimaryExpression
 	
 	public static class NoneLiteral extends LiteralExpression
 	{
+		public static final NoneLiteral NONE = new NoneLiteral();
+		
 		private NoneLiteral()
 		{
 			
@@ -228,5 +287,12 @@ public class LiteralExpression extends Expression.PrimaryExpression
 			else
 				literals = new Expression[0];
 		}
+	}
+	
+	public static interface NumberLiteral
+	{
+		double asDouble();
+		boolean isInt();
+		long asInt();
 	}
 }
