@@ -1,18 +1,24 @@
 package net.tadpole.compiler.ast;
 
+import java.util.List;
+import java.util.stream.Collectors;
+
 import net.tadpole.compiler.LocalVariable;
 import net.tadpole.compiler.parser.TadpoleParser;
 
 public class StatementNode extends ASTNode
 {
-	private final byte T_EXPRESSION = 0;
-	private final byte T_RECALL = 1;
-	private final byte T_RETURN = 2;
-	private final byte T_LOCAL_VAR = 3;
+	public static final byte T_EXPRESSION = 0;
+	public static final byte T_RECALL = 1;
+	public static final byte T_RETURN = 2;
+	public static final byte T_LOCAL_VAR = 3;
+	public static final byte T_IF = 4;
+	public static final byte T_WHILE = 5;
 	
-	private final byte type;
+	public final byte type;
 	public Expression expression;
 	public LocalVariable localVarDec;
+	public List<StatementNode> statements;
 	
 	public StatementNode(ASTNode parent, TadpoleParser.StatementContext context)
 	{
@@ -23,11 +29,16 @@ public class StatementNode extends ASTNode
 			type = T_RECALL;
 		else if(context.getChild(0).getText().equals("return"))
 			type = T_RETURN;
+		else if(context.getChild(0).getText().equals("if"))
+			type = T_IF;
+		else if(context.getChild(0).getText().equals("while"))
+			type = T_WHILE;
 		else
 			type = T_EXPRESSION;
 		
 		expression = context.expression() != null ? Expression.convert(context.expression()) : null;
 		localVarDec = context.variableDec() != null ? new LocalVariable(context.variableDec()) : null;
+		statements = context.functionBody().statement().stream().map(sc -> new StatementNode(this, sc)).collect(Collectors.toList());
 	}
 	
 	public boolean isLocalVariableDecStatement()
@@ -48,5 +59,15 @@ public class StatementNode extends ASTNode
 	public boolean isReturnStatement()
 	{
 		return type == T_RETURN;
+	}
+	
+	public boolean isIfStatement()
+	{
+		return type == T_IF;
+	}
+	
+	public boolean isWhileStatement()
+	{
+		return type == T_WHILE;
 	}
 }

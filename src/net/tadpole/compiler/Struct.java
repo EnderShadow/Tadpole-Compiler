@@ -6,6 +6,15 @@ import java.util.List;
 import java.util.Optional;
 import java.util.stream.Collectors;
 
+import org.apache.bcel.Constants;
+import org.apache.bcel.classfile.Field;
+import org.apache.bcel.generic.ClassGen;
+import org.apache.bcel.generic.FieldGen;
+import org.apache.bcel.generic.InstructionConstants;
+import org.apache.bcel.generic.InstructionFactory;
+import org.apache.bcel.generic.InstructionList;
+import org.apache.bcel.generic.MethodGen;
+
 import javafx.util.Pair;
 import net.tadpole.compiler.ast.Expression;
 import net.tadpole.compiler.ast.FileNode;
@@ -14,10 +23,11 @@ import net.tadpole.compiler.ast.ParameterNode;
 import net.tadpole.compiler.ast.StructNode;
 import net.tadpole.compiler.ast.VariableDecNode;
 import net.tadpole.compiler.util.Triplet;
+import net.tadpole.compiler.util.TypeUtils;
 
 public class Struct
 {
-	private static final List<Struct> structs = new ArrayList<Struct>();
+	public static final List<Struct> structs = new ArrayList<Struct>();
 	
 	public static List<Struct> registerStructs(FileNode fileNode)
 	{
@@ -54,5 +64,55 @@ public class Struct
 		this.name = name;
 		this.parameters = parameters;
 		this.attributes = attributes;
+	}
+	
+	public ClassGen toBytecode()
+	{
+		// create class
+		int accFlags = Constants.ACC_PUBLIC | Constants.ACC_STATIC;
+		ClassGen cg = new ClassGen(moduleName + "." + name, "java.lang.Object", moduleName + ".tadpole", accFlags, new String[0]);
+		
+		// add fields
+		Field[] fa = attributes.stream().map(triplet -> new FieldGen(Constants.ACC_PUBLIC, triplet.first.toBCELType(), triplet.second, cg.getConstantPool()).getField()).peek(cg::addField).toArray(Field[]::new);
+		
+		// <-- START CONSTRUCTOR -->
+		// create constructor
+		InstructionList il = new InstructionList();
+		MethodGen mg = new MethodGen(Constants.ACC_PUBLIC, org.apache.bcel.generic.Type.VOID, parameters.stream().map(pair -> pair.getKey().toBCELType()).toArray(org.apache.bcel.generic.Type[]::new), parameters.stream().map(pair -> pair.getValue()).toArray(String[]::new), "<init>", cg.getClassName(), il, cg.getConstantPool());
+		
+		// generate constructor body
+		InstructionFactory factory = new InstructionFactory(cg);
+		
+		// call super constructor
+		il.append(InstructionConstants.THIS);
+		il.append(factory.createInvoke("java.lang.Object", "<init>", org.apache.bcel.generic.Type.VOID, new org.apache.bcel.generic.Type[0], Constants.INVOKESPECIAL));
+		
+		// initialize all instance variables
+		for(Triplet<Type, String, Expression> field : attributes)
+		{
+			// push this and expression to stack
+			il.append(InstructionConstants.THIS);
+			Pair<InstructionList, org.apache.bcel.generic.Type> exprBytecode = field.third.toBytecode(cg, mg);
+			il.append(exprBytecode.getKey());
+			
+			org.apache.bcel.generic.Type fieldType = field.first.toBCELType();
+			org.apache.bcel.generic.Type exprType = exprBytecode.getValue();
+			
+			// convert expression if needed
+			if(!fieldType.equals(exprType))
+				il.append(TypeUtils.cast(exprType, fieldType, factory));
+			
+			// store expression in field
+			il.append(factory.createPutField(cg.getClassName(), field.second, fieldType));
+		}
+		il.append(InstructionConstants.RETURN);
+		
+		// add constructor
+		cg.addMethod(mg.getMethod());
+		
+		// <-- END CONSTRUCTOR -->
+		
+		// return class
+		return cg;
 	}
 }

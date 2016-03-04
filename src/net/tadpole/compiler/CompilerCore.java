@@ -66,10 +66,16 @@ public class CompilerCore
 			List<Struct> structs = Struct.registerStructs(fileNode);
 			List<String> imports = fileNode.getChildren().stream().filter(n -> n instanceof ImportNode).map(n -> ((ImportNode) n).moduleName).collect(Collectors.toList());
 			List<Function> functions = fileNode.getChildren().stream().filter(n -> n instanceof FunctionDecNode).map(n -> new Function((FunctionDecNode) n)).collect(Collectors.toList());
-			List<Statement> statements = fileNode.getChildren().stream().filter(n -> n instanceof StatementNode).map(n -> new Statement((StatementNode) n)).collect(Collectors.toList());
+			List<Statement> statements = fileNode.getChildren().stream().filter(n -> n instanceof StatementNode).map(n -> Statement.convert((StatementNode) n)).collect(Collectors.toList());
 			Module module = new Module(moduleName, structs, imports, functions, statements);
-			
 		}
+		Module.absolutifyTypes(); // also verifies that types exist and are imported
+		Module.verifySanity(); // verifies that no duplicates are declared
+		Module.mergeParallelAssigns();
+		
+		// TODO format struct names inner$outer, generate bytecode
+		
+		ClassGen[] classGens = Module.generateBytecode();
 		
 		List<ModuleNode> modules = roots.stream().map(Pair::getValue).collect(Collectors.toList());
 		LibLoader.loadLibraries();
@@ -399,6 +405,7 @@ public class CompilerCore
 				// uncomment if binary expressions become valid on the left side for assignment
 				if(/*findParallelAssign(exprLeft) || */findParallelAssign(exprRight))
 					throw new CompilationException("Cannot have the parallel assignment operator in a sub-expression");
+				
 				return new BinaryExpression(exprLeft, be.op == BinaryOp.PARALLEL_ASSIGN ? BinaryOp.PARALLEL_ASSIGN : BinaryOp.ASSIGN, exprRight);
 			}
 			

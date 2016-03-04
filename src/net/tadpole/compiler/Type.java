@@ -2,6 +2,10 @@ package net.tadpole.compiler;
 
 import java.util.Arrays;
 
+import org.apache.bcel.classfile.Utility;
+
+import net.tadpole.compiler.exceptions.CompilationException;
+
 public class Type
 {
 	private static final String[] primitives = {"byte", "short", "int", "long", "boolean", "char", "float", "double"};
@@ -23,6 +27,27 @@ public class Type
 		return typeName.endsWith("[]");
 	}
 	
+	public boolean isPrimitiveArray()
+	{
+		return isPrimitiveArray(this);
+	}
+	
+	public static boolean isPrimitiveArray(Type t)
+	{
+		if(!t.isArray())
+			return false;
+		while(t.isArray())
+			t = t.getElementType();
+		return t.isPrimitive();
+	}
+	
+	public Type getElementType()
+	{
+		if(isArray())
+			return new Type(typeName.substring(0, typeName.length() - 2));
+		throw new IllegalStateException("Cannot get element type from non-array");
+	}
+	
 	public boolean isAbsoluteType()
 	{
 		return typeName.contains(".");
@@ -33,8 +58,45 @@ public class Type
 		return isAbsoluteType() ? this : new Type(moduleIfRelative + "." + typeName);
 	}
 	
-	public Type fromStruct(Struct struct)
+	public String getModuleName()
+	{
+		if(isPrimitive())
+			return null;
+		if(isAbsoluteType())
+			return typeName.substring(0, typeName.indexOf("."));
+		throw new CompilationException("Cannot get module from non-absolute type");
+	}
+	
+	public String getTypeName()
+	{
+		if(isAbsoluteType())
+			return typeName.substring(typeName.indexOf(".") + 1);
+		return typeName;
+	}
+	
+	public static Type fromStruct(Struct struct)
 	{
 		return new Type(struct.moduleName + "." + struct.name);
+	}
+	
+	public org.apache.bcel.generic.Type toBCELType()
+	{
+		return org.apache.bcel.generic.Type.getType(Utility.getSignature(typeName));
+	}
+	
+	@Override
+	public String toString()
+	{
+		return typeName;
+	}
+	
+	@Override
+	public boolean equals(Object obj)
+	{
+		if(obj != null && obj instanceof Type)
+		{
+			return typeName.equals(((Type) obj).typeName);
+		}
+		return false;
 	}
 }
