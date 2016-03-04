@@ -224,6 +224,8 @@ public abstract class Expression
 					il.append(TypeUtils.cast(argBytecode[i].getValue(), parameterTypes[i], factory));
 				}
 				il.append(factory.createInvoke(structType.toString(), "<init>", org.apache.bcel.generic.Type.VOID, parameterTypes, Constants.INVOKESPECIAL));
+				
+				return new Pair<InstructionList, org.apache.bcel.generic.Type>(il, structType);
 			}
 		}
 		
@@ -234,6 +236,12 @@ public abstract class Expression
 			public WrapExpression(Expression expression)
 			{
 				this.expression = expression;
+			}
+			
+			@Override
+			public Pair<InstructionList, org.apache.bcel.generic.Type> toBytecode(ClassGen cg, MethodGen mg)
+			{
+				return expression.toBytecode(cg, mg);
 			}
 		}
 		
@@ -251,6 +259,12 @@ public abstract class Expression
 			private FieldAccessExpression(TadpoleParser.PrimaryContext context, String field)
 			{
 				this(Expression.convertPrimary(context), field);
+			}
+			
+			@Override
+			public Pair<InstructionList, org.apache.bcel.generic.Type> toBytecode(ClassGen cg, MethodGen mg)
+			{
+				
 			}
 		}
 		
