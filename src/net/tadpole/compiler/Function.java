@@ -5,6 +5,13 @@ import java.util.List;
 import java.util.Optional;
 import java.util.stream.Collectors;
 
+import org.apache.bcel.Constants;
+import org.apache.bcel.generic.ClassGen;
+import org.apache.bcel.generic.InstructionFactory;
+import org.apache.bcel.generic.InstructionList;
+import org.apache.bcel.generic.MethodGen;
+import org.apache.bcel.generic.ReturnInstruction;
+
 import javafx.util.Pair;
 import net.tadpole.compiler.ast.FunctionDecNode;
 import net.tadpole.compiler.ast.ParameterListNode;
@@ -16,14 +23,14 @@ public class Function
 	public final String name;
 	public final List<Pair<Type, String>> parameters;
 	public Type returnType;
-	public final List<Statement> statements;
+	public final Statement statement;
 	
-	public Function(String name, List<Pair<Type, String>> parameters, Type returnType, List<Statement> statements)
+	public Function(String name, List<Pair<Type, String>> parameters, Type returnType, Statement statement)
 	{
 		this.name = name;
 		this.parameters = parameters;
 		this.returnType = returnType;
-		this.statements = statements;
+		this.statement = statement;
 	}
 	
 	public Function(FunctionDecNode fdn)
@@ -35,7 +42,7 @@ public class Function
 		else
 			parameters = Collections.emptyList();
 		returnType = fdn.returnType;
-		statements = fdn.getChildren().stream().filter(n -> n instanceof StatementNode).map(n -> Statement.convert((StatementNode) n)).collect(Collectors.toList());
+		statement = fdn.getChildren().stream().filter(n -> n instanceof StatementNode).map(n -> Statement.convert((StatementNode) n)).findFirst().get();
 	}
 	
 	@Override
@@ -54,5 +61,18 @@ public class Function
 			return true;
 		}
 		return false;
+	}
+	
+	public MethodGen toBytecode(ClassGen cg)
+	{
+		InstructionList il = new InstructionList();
+		MethodGen mg = new MethodGen(Constants.ACC_PUBLIC | Constants.ACC_STATIC, returnType.toBCELType(), parameters.stream().map(p -> p.getKey().toBCELType()).toArray(org.apache.bcel.generic.Type[]::new), parameters.stream().map(Pair::getValue).toArray(String[]::new), name, cg.getClassName(), il, cg.getConstantPool());
+		il.append(statement.toBytecode(cg, mg));
+		if(!(il.getEnd().getInstruction() instanceof ReturnInstruction))
+			il.append(InstructionFactory.createReturn(mg.getReturnType()));
+		mg.removeNOPs();
+		mg.setMaxLocals();
+		mg.setMaxStack();
+		return mg;
 	}
 }

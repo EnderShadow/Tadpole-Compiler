@@ -1,9 +1,23 @@
 package net.tadpole.compiler.ast;
 
+import java.util.Arrays;
+import java.util.stream.Collectors;
+
+import org.apache.bcel.generic.ArrayType;
+import org.apache.bcel.generic.ClassGen;
+import org.apache.bcel.generic.InstructionConstants;
+import org.apache.bcel.generic.InstructionFactory;
+import org.apache.bcel.generic.InstructionList;
+import org.apache.bcel.generic.MethodGen;
+import org.apache.bcel.generic.PUSH;
+import org.apache.bcel.generic.Type;
+
+import javafx.util.Pair;
 import net.tadpole.compiler.exceptions.CompilationException;
 import net.tadpole.compiler.parser.TadpoleParser;
+import net.tadpole.compiler.util.TypeUtils;
 
-public class LiteralExpression extends Expression.PrimaryExpression
+public abstract class LiteralExpression extends Expression.PrimaryExpression
 {
 	public static class IntLiteral extends LiteralExpression implements NumberLiteral
 	{
@@ -21,33 +35,36 @@ public class LiteralExpression extends Expression.PrimaryExpression
 			intLiteral = intLiteral.replace("_", "");
 			int signOffset = intLiteral.startsWith("+") || intLiteral.startsWith("-") ? 1 : 0;
 			int base = 10;
-			switch(Character.toLowerCase(intLiteral.charAt(signOffset + 1)))
+			if(intLiteral.length() > 1)
 			{
-			case 'o':
-				base = 8;
-				intLiteral = intLiteral.substring(0, signOffset) + intLiteral.substring(signOffset + 2);
-				break;
-			case 'b':
-				base = 2;
-				intLiteral = intLiteral.substring(0, signOffset) + intLiteral.substring(signOffset + 2);
-				break;
-			case 'h':
-				base = 16;
-				intLiteral = intLiteral.substring(0, signOffset) + intLiteral.substring(signOffset + 2);
-				break;
-			case '0':
-			case '1':
-			case '2':
-			case '3':
-			case '4':
-			case '5':
-			case '6':
-			case '7':
-			case '8':
-			case '9':
-				break;
-			default:
-				throw new CompilationException("Unknown integer base: " + intLiteral.charAt(signOffset + 1));
+				switch(Character.toLowerCase(intLiteral.charAt(signOffset + 1)))
+				{
+				case 'o':
+					base = 8;
+					intLiteral = intLiteral.substring(0, signOffset) + intLiteral.substring(signOffset + 2);
+					break;
+				case 'b':
+					base = 2;
+					intLiteral = intLiteral.substring(0, signOffset) + intLiteral.substring(signOffset + 2);
+					break;
+				case 'h':
+					base = 16;
+					intLiteral = intLiteral.substring(0, signOffset) + intLiteral.substring(signOffset + 2);
+					break;
+				case '0':
+				case '1':
+				case '2':
+				case '3':
+				case '4':
+				case '5':
+				case '6':
+				case '7':
+				case '8':
+				case '9':
+					break;
+				default:
+					throw new CompilationException("Unknown integer base: " + intLiteral.charAt(signOffset + 1));
+				}
 			}
 			
 			if(wide = intLiteral.toLowerCase().endsWith("l"))
@@ -72,6 +89,18 @@ public class LiteralExpression extends Expression.PrimaryExpression
 		public long asInt()
 		{
 			return value;
+		}
+		
+		@Override
+		public Pair<InstructionList, Type> toBytecode(ClassGen cg, MethodGen mg)
+		{
+			InstructionList il = new InstructionList();
+			if(wide)
+				il.append(new PUSH(cg.getConstantPool(), value));
+			else
+				il.append(new PUSH(cg.getConstantPool(), (int) value));
+			
+			return new Pair<InstructionList, Type>(il, wide ? Type.LONG : Type.INT);
 		}
 	}
 	
@@ -109,6 +138,18 @@ public class LiteralExpression extends Expression.PrimaryExpression
 		{
 			return (long) value;
 		}
+		
+		@Override
+		public Pair<InstructionList, Type> toBytecode(ClassGen cg, MethodGen mg)
+		{
+			InstructionList il = new InstructionList();
+			if(wide)
+				il.append(new PUSH(cg.getConstantPool(), value));
+			else
+				il.append(new PUSH(cg.getConstantPool(), (float) value));
+			
+			return new Pair<InstructionList, Type>(il, wide ? Type.DOUBLE : Type.FLOAT);
+		}
 	}
 	
 	public static class BooleanLiteral extends LiteralExpression
@@ -131,6 +172,14 @@ public class LiteralExpression extends Expression.PrimaryExpression
 		public static BooleanLiteral of(boolean value)
 		{
 			return value ? TRUE : FALSE;
+		}
+		
+		@Override
+		public Pair<InstructionList, Type> toBytecode(ClassGen cg, MethodGen mg)
+		{
+			InstructionList il = new InstructionList();
+			il.append(new PUSH(cg.getConstantPool(), value));
+			return new Pair<InstructionList, Type>(il, Type.BOOLEAN);
 		}
 	}
 	
@@ -195,6 +244,14 @@ public class LiteralExpression extends Expression.PrimaryExpression
 		public long asInt()
 		{
 			return value;
+		}
+		
+		@Override
+		public Pair<InstructionList, Type> toBytecode(ClassGen cg, MethodGen mg)
+		{
+			InstructionList il = new InstructionList();
+			il.append(new PUSH(cg.getConstantPool(), value));
+			return new Pair<InstructionList, Type>(il, Type.CHAR);
 		}
 	}
 	
@@ -264,6 +321,14 @@ public class LiteralExpression extends Expression.PrimaryExpression
 			
 			return sb.toString();
 		}
+		
+		@Override
+		public Pair<InstructionList, Type> toBytecode(ClassGen cg, MethodGen mg)
+		{
+			InstructionList il = new InstructionList();
+			il.append(new PUSH(cg.getConstantPool(), value));
+			return new Pair<InstructionList, Type>(il, Type.STRING);
+		}
 	}
 	
 	public static class NoneLiteral extends LiteralExpression
@@ -274,18 +339,51 @@ public class LiteralExpression extends Expression.PrimaryExpression
 		{
 			
 		}
+		
+		@Override
+		public Pair<InstructionList, Type> toBytecode(ClassGen cg, MethodGen mg)
+		{
+			InstructionList il = new InstructionList();
+			il.append(InstructionConstants.ACONST_NULL);
+			return new Pair<InstructionList, Type>(il, Type.NULL);
+		}
 	}
 	
 	public static class ArrayLiteral extends LiteralExpression
 	{
-		public final Expression[] literals;
+		public final Expression[] expressions;
 		
 		public ArrayLiteral(TadpoleParser.ArrayLiteralContext context)
 		{
 			if(context.expressionList() != null)
-				literals = context.expressionList().expression().stream().map(Expression::convert).toArray(Expression[]::new);
+				expressions = context.expressionList().expression().stream().map(Expression::convert).toArray(Expression[]::new);
 			else
-				literals = new Expression[0];
+				expressions = new Expression[0];
+		}
+		
+		@Override
+		public Pair<InstructionList, Type> toBytecode(ClassGen cg, MethodGen mg)
+		{
+			@SuppressWarnings("unchecked")
+			Pair<InstructionList, Type>[] exprBytecodes = Arrays.stream(expressions).map(e -> e.toBytecode(cg, mg)).toArray(Pair[]::new);
+			
+			InstructionList il = new InstructionList();
+			InstructionFactory factory = new InstructionFactory(cg);
+			ArrayType arrayType = TypeUtils.getArrayType(Arrays.stream(exprBytecodes).map(Pair::getValue).collect(Collectors.toList()));
+			Type elementType = arrayType.getElementType();
+			
+			il.append(new PUSH(cg.getConstantPool(), exprBytecodes.length));
+			il.append(factory.createNewArray(elementType, (short) 1));
+			for(int i = 0; i < exprBytecodes.length; i++)
+			{
+				il.append(InstructionConstants.DUP);
+				il.append(new PUSH(cg.getConstantPool(), i));
+				il.append(exprBytecodes[i].getKey());
+				il.append(TypeUtils.cast(exprBytecodes[i].getValue(), elementType, factory));
+				il.append(InstructionFactory.createArrayStore(elementType));
+			}
+			
+			return new Pair<InstructionList, Type>(il, arrayType);
 		}
 	}
 	

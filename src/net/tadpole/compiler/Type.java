@@ -8,7 +8,7 @@ import net.tadpole.compiler.exceptions.CompilationException;
 
 public class Type
 {
-	private static final String[] primitives = {"byte", "short", "int", "long", "boolean", "char", "float", "double"};
+	private static final String[] primitives = {"byte", "short", "int", "long", "boolean", "char", "float", "double", "void"};
 	
 	public final String typeName;
 	
@@ -81,7 +81,13 @@ public class Type
 	
 	public org.apache.bcel.generic.Type toBCELType()
 	{
-		return org.apache.bcel.generic.Type.getType(Utility.getSignature(typeName));
+		try
+		{
+			return org.apache.bcel.generic.Type.getType(Class.forName(typeName));
+		}
+		catch(Exception e) {}
+		
+		return org.apache.bcel.generic.Type.getType(Utility.getSignature(typeName.replace('.', '$')));
 	}
 	
 	@Override

@@ -70,7 +70,7 @@ public class Struct
 	{
 		// create class
 		int accFlags = Constants.ACC_PUBLIC | Constants.ACC_STATIC;
-		ClassGen cg = new ClassGen(moduleName + "." + name, "java.lang.Object", moduleName + ".tadpole", accFlags, new String[0]);
+		ClassGen cg = new ClassGen(moduleName + "$" + name, "java.lang.Object", moduleName + ".tadpole", accFlags, new String[0]);
 		
 		// add fields
 		Field[] fa = attributes.stream().map(triplet -> new FieldGen(Constants.ACC_PUBLIC, triplet.first.toBCELType(), triplet.second, cg.getConstantPool()).getField()).peek(cg::addField).toArray(Field[]::new);
@@ -108,6 +108,9 @@ public class Struct
 		il.append(InstructionConstants.RETURN);
 		
 		// add constructor
+		mg.removeNOPs();
+		mg.setMaxLocals();
+		mg.setMaxStack();
 		cg.addMethod(mg.getMethod());
 		
 		// <-- END CONSTRUCTOR -->

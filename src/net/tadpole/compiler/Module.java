@@ -4,8 +4,15 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 import java.util.stream.Collectors;
+import java.util.stream.Stream;
 
+import org.apache.bcel.Constants;
+import org.apache.bcel.generic.BasicType;
 import org.apache.bcel.generic.ClassGen;
+import org.apache.bcel.generic.InstructionFactory;
+import org.apache.bcel.generic.InstructionList;
+import org.apache.bcel.generic.MethodGen;
+import org.apache.bcel.generic.ReturnInstruction;
 
 import javafx.util.Pair;
 import net.tadpole.compiler.Statement.ExpressionStatement;
@@ -31,6 +38,8 @@ public class Module
 		this.declaredStructs = declaredStructs;
 		this.imports = imports;
 		this.declaredFunctions = declaredFunctions;
+		if(declaredFunctions.stream().anyMatch(f -> f.name.equals("__moduleInit__")))
+			throw new CompilationException("Cannot create a function called __moduleInit__ because it's a reserved function name");
 		this.statements = statements;
 		modules.add(this);
 	}
@@ -38,7 +47,29 @@ public class Module
 	public List<ClassGen> toBytecode()
 	{
 		List<ClassGen> classes = new ArrayList<ClassGen>();
+		classes.add(null); // placeholder for module class
 		declaredStructs.stream().map(Struct::toBytecode).forEach(classes::add);
+		
+		ClassGen cg = new ClassGen(name, "java.lang.Object", name + ".tadpole", Constants.ACC_PUBLIC | Constants.ACC_FINAL, new String[0]);
+		declaredFunctions.stream().map(f -> f.toBytecode(cg).getMethod()).forEach(cg::addMethod);
+		
+		InstructionList il = new InstructionList();
+		MethodGen mg = new MethodGen(Constants.ACC_PUBLIC | Constants.ACC_STATIC, BasicType.VOID, new org.apache.bcel.generic.Type[]{BasicType.BOOLEAN}, new String[]{"isMain"}, "__moduleInit__", cg.getClassName(), il, cg.getConstantPool());
+		statements.forEach(s -> il.append(s.toBytecode(cg, mg)));
+		if(!(il.getEnd().getInstruction() instanceof ReturnInstruction))
+			il.append(InstructionFactory.createReturn(mg.getReturnType()));
+		mg.removeNOPs();
+		mg.setMaxLocals();
+		mg.setMaxStack();
+		cg.addMethod(mg.getMethod());
+		
+		classes.set(0, cg); // replace placeholder with module class
+		return classes;
+	}
+	
+	public static Module getModule(String name)
+	{
+		return modules.stream().filter(m -> m.name.equals(name)).findFirst().orElse(null);
 	}
 	
 	public static void absolutifyTypes()
@@ -92,7 +123,7 @@ public class Module
 			}
 			for(Function f : m.declaredFunctions)
 			{
-				f.statements.forEach(s -> absolutifyTypes(s, imports));
+				absolutifyTypes(f.statement, imports);
 				
 				List<Pair<Type, String>> parameters = f.parameters;
 				for(int i = 0; i < parameters.size(); i++)
@@ -125,7 +156,11 @@ public class Module
 	
 	private static void absolutifyTypes(Statement s, List<Module> imports)
 	{
-		if(s instanceof Statement.LocalVarDecStatement)
+		if(s instanceof Statement.BlockStatement)
+		{
+			((Statement.BlockStatement) s).statements.forEach(s2 -> absolutifyTypes(s2, imports));
+		}
+		else if(s instanceof Statement.LocalVarDecStatement)
 		{
 			Statement.LocalVarDecStatement lvds = (Statement.LocalVarDecStatement) s;
 			if(!lvds.type.isAbsoluteType() && !lvds.type.isPrimitive() && !Type.isPrimitiveArray(lvds.type))
@@ -157,9 +192,21 @@ public class Module
 		}
 		else if(s instanceof Statement.WhileStatement)
 		{
-			Statement.WhileStatement is = (Statement.WhileStatement) s;
-			absolutifyTypes(is.expression, imports);
-			is.statements.forEach(s2 -> absolutifyTypes(s2, imports));
+			Statement.WhileStatement ws = (Statement.WhileStatement) s;
+			absolutifyTypes(ws.expression, imports);
+			absolutifyTypes(ws.statement, imports);
+		}
+		else if(s instanceof Statement.DoWhileStatement)
+		{
+			Statement.DoWhileStatement dws = (Statement.DoWhileStatement) s;
+			absolutifyTypes(dws.expression, imports);
+			absolutifyTypes(dws.statement, imports);
+		}
+		else if(s instanceof Statement.ParallelStatement)
+		{
+			Statement.ParallelStatement ps = (Statement.ParallelStatement) s;
+			ps.leftExprs.forEach(e -> absolutifyTypes(e, imports));
+			ps.rightExprs.forEach(e -> absolutifyTypes(e, imports));
 		}
 	}
 	
@@ -216,16 +263,22 @@ public class Module
 			}
 			else if(expr instanceof Expression.PrimaryExpression.FieldAccessExpression)
 			{
-				absolutifyTypes(((Expression.PrimaryExpression.FieldAccessExpression) expr).expression, imports);
+				if(((Expression.PrimaryExpression.FieldAccessExpression) expr).expression != null)
+					absolutifyTypes(((Expression.PrimaryExpression.FieldAccessExpression) expr).expression, imports);
 			}
 			else if(expr instanceof Expression.PrimaryExpression.FunctionCallExpression)
 			{
-				for(Expression e : ((Expression.PrimaryExpression.FunctionCallExpression) expr).parameters)
+				Expression.PrimaryExpression.FunctionCallExpression fce = (Expression.PrimaryExpression.FunctionCallExpression) expr;
+				if(fce.containingModule == null)
+					fce.containingModule = imports.get(0).name;
+				else if(imports.stream().map(module -> module.name).noneMatch(name -> name.equals(fce.containingModule)))
+					throw new CompilationException("Module '" + fce.containingModule + "' was not imported or does not exist");
+				for(Expression e : fce.parameters)
 					absolutifyTypes(e, imports);
 			}
 			else if(expr instanceof LiteralExpression.ArrayLiteral)
 			{
-				for(Expression e : ((LiteralExpression.ArrayLiteral) expr).literals)
+				for(Expression e : ((LiteralExpression.ArrayLiteral) expr).expressions)
 					absolutifyTypes(e, imports);
 			}
 			else if(!(expr instanceof LiteralExpression))
@@ -282,7 +335,7 @@ public class Module
 						m.statements.add(start, parallelStatement);
 					}
 				}
-				else if(end == i - 1);
+				else if(start != -1 && end == i - 1)
 				{
 					List<Statement> parallelStatements = m.statements.subList(start, end + 1);
 					Statement parallelStatement = Statement.createParallelStatement(parallelStatements);

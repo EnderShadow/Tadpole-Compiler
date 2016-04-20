@@ -14,9 +14,11 @@ public class StatementNode extends ASTNode
 	public static final byte T_LOCAL_VAR = 3;
 	public static final byte T_IF = 4;
 	public static final byte T_WHILE = 5;
+	public static final byte T_BLOCK = 6;
+	public static final byte T_DO_WHILE = 7;
 	
 	public final byte type;
-	public Expression expression;
+	public List<Expression> expressions;
 	public LocalVariable localVarDec;
 	public List<StatementNode> statements;
 	
@@ -33,12 +35,16 @@ public class StatementNode extends ASTNode
 			type = T_IF;
 		else if(context.getChild(0).getText().equals("while"))
 			type = T_WHILE;
+		else if(context.getChild(0).getText().equals("{"))
+			type = T_BLOCK;
+		else if(context.getChild(0).getText().equals("do"))
+			type = T_DO_WHILE;
 		else
 			type = T_EXPRESSION;
 		
-		expression = context.expression() != null ? Expression.convert(context.expression()) : null;
+		expressions = context.expression() != null ? context.expression().stream().map(Expression::convert).collect(Collectors.toList()) : null;
 		localVarDec = context.variableDec() != null ? new LocalVariable(context.variableDec()) : null;
-		statements = context.functionBody().statement().stream().map(sc -> new StatementNode(this, sc)).collect(Collectors.toList());
+		statements = context.statement() != null ? context.statement().stream().map(sc -> new StatementNode(this, sc)).collect(Collectors.toList()) : null;
 	}
 	
 	public boolean isLocalVariableDecStatement()
@@ -69,5 +75,15 @@ public class StatementNode extends ASTNode
 	public boolean isWhileStatement()
 	{
 		return type == T_WHILE;
+	}
+	
+	public boolean isBlockStatement()
+	{
+		return type == T_BLOCK;
+	}
+	
+	public boolean isDoWhileStatement()
+	{
+		return type == T_DO_WHILE;
 	}
 }

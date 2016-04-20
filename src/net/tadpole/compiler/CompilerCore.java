@@ -28,8 +28,10 @@ import org.antlr.v4.runtime.ANTLRInputStream;
 import org.antlr.v4.runtime.CommonTokenStream;
 import org.antlr.v4.runtime.tree.ParseTreeWalker;
 import org.apache.bcel.Repository;
+import org.apache.bcel.classfile.ClassParser;
 import org.apache.bcel.classfile.JavaClass;
 import org.apache.bcel.generic.ClassGen;
+import org.apache.bcel.util.BCELifier;
 import org.apache.bcel.verifier.VerificationResult;
 import org.apache.bcel.verifier.Verifier;
 import org.apache.bcel.verifier.VerifierFactory;
@@ -38,11 +40,13 @@ public class CompilerCore
 {
 	public static void main(String[] args) throws Exception
 	{
-		//new BCELifier(new ClassParser("bin/net/chigara/compiler/TestClass.class").parse(), System.out).start();
+		//new BCELifier(new ClassParser("out/Test$IntPair.class").parse(), System.out).start();
 		
 		//System.exit(0);
 		
 		args = new String[]{"examples/Test.tadpole"};
+		for(int i = 0; i < args.length; i++)
+			args[i] = args[i].replace('\\', '/');
 		
 		if(args.length < 1)
 			throw new IllegalArgumentException("Invalid number of arguments");
@@ -50,14 +54,16 @@ public class CompilerCore
 		for(int i = 0; i < args.length; i++)
 		{
 			String filename = args[i];
-			String fileData = new BufferedReader(new FileReader(new File(filename))).lines().collect(Collectors.joining("\n"));
+			BufferedReader br = new BufferedReader(new FileReader(new File(filename)));
+			String fileData = br.lines().collect(Collectors.joining("\n"));
+			br.close();
 			
 			TadpoleLexer lexer = new TadpoleLexer(new ANTLRInputStream(fileData));
 			CommonTokenStream tokens = new CommonTokenStream(lexer);
 			TadpoleParser parser = new TadpoleParser(tokens);
 			FileContext mc = parser.file();
 			
-			String moduleName = filename.substring(0, filename.length() - 8);
+			String moduleName = filename.substring(filename.lastIndexOf("/") + 1, filename.length() - 8);
 			ParseTreeWalker walker = new ParseTreeWalker();
 			TadpoleListener listener = new TadpoleListener(moduleName);
 			walker.walk(listener, mc);
@@ -76,88 +82,44 @@ public class CompilerCore
 		// TODO format struct names inner$outer, generate bytecode
 		
 		ClassGen[] classGens = Module.generateBytecode();
+		JavaClass[] classes = Arrays.stream(classGens).map(ClassGen::getJavaClass).toArray(JavaClass[]::new);
 		
-		List<ModuleNode> modules = roots.stream().map(Pair::getValue).collect(Collectors.toList());
-		LibLoader.loadLibraries();
-		Library.treeify();
-		modules.forEach(m -> applyToExpression(m, CompilerCore::simplifyConstantExpressions));
-		List<Module> modules2 = modules.stream().map(Module::new).collect(Collectors.toList());
-		modules2.forEach(Library::addModule);
-		modules2.forEach(Module::finalizeImports);
-		ResolutionFactory.Future.resolve();
-		Library.compileable.forEach(c -> {
-			c.parent.children.add(c);
-			c.interfaces.forEach(i -> i.children.add(c));
-		});
-		// is this one even needed?
-		//FutureResolutions.resolve();
-		if(!ResolutionFactory.Future.isResolved())
-			throw new IllegalStateException("Could not resolve all resolutions in stage 1 of the compilation process");
-		Statement.resolveStage2();
-		Field.resolveStage2();
-		ResolutionFactory.Future.resolve();
-		if(!ResolutionFactory.Future.isResolved())
-			throw new IllegalStateException("Could not resolve all resolutions in stage 2 of the compilation process");
-		List<ClassGen> classes = Library.compileable.stream().map(Class::toBytecode).collect(Collectors.toList());
-		// TODO convert to bytecode
-		
-/*		for(Pair<String, ClassNode> p : roots)
+		Arrays.stream(classes).forEach(Repository::addClass);
+		for(JavaClass jc : classes)
 		{
-			if(p == null)
-				continue;
-			
-			ClassNode root = p.getValue();
-			List<String> importNames = root.getChildren().stream().filter(n -> n instanceof ImportNode).map(n -> ((ImportNode) n).module).collect(Collectors.toList());
-			if(!importNames.contains("Lang"))
-				importNames.add("Lang");
-			List<Inheritable> imports = modules.stream().filter(n -> importNames.stream().anyMatch(i -> n.getName().contains(i))).collect(Collectors.toList());
-			
-			//validate(root);
-			applyToExpression(root, CompilerCore::simplifyConstantExpressions);
-			//root.getChildren().forEach(node -> printNodes(node, 0));
-			
-			LibLoader.delete(new File("out"), false);
-			
-			BCELConverter converter = new BCELConverter(p.getKey(), imports);
-			List<JavaClass> classes = converter.convertToBCEL(root, modules);
-			classes.stream().map(JavaClass::getMethods).mapToInt(ma -> ma.length).forEach(System.out::println);
-			classes.forEach(Repository::addClass);
-			for(JavaClass jc : classes)
+			Verifier verifier = VerifierFactory.getVerifier(jc.getClassName());
+			VerificationResult vr = verifier.doPass1();
+			if(vr.getStatus() == VerificationResult.VERIFIED_REJECTED)
 			{
-				Verifier verifier = VerifierFactory.getVerifier(jc.getClassName());
-				VerificationResult vr = verifier.doPass1();
+				System.err.println("Failed to verify class: " + jc.getClassName() + "\n\n" + vr.getMessage());
+				continue;
+			}
+			vr = verifier.doPass2();
+			if(vr.getStatus() == VerificationResult.VERIFIED_REJECTED)
+			{
+				System.err.println("Failed to verify class: " + jc.getClassName() + "\n\n" + vr.getMessage());
+				continue;
+			}
+			for(int i = 0; i < jc.getMethods().length; i++)
+			{
+				vr = verifier.doPass3a(i);
 				if(vr.getStatus() == VerificationResult.VERIFIED_REJECTED)
 				{
 					System.err.println("Failed to verify class: " + jc.getClassName() + "\n\n" + vr.getMessage());
-					continue;
+					break;
 				}
-				vr = verifier.doPass2();
+				vr = verifier.doPass3b(i);
 				if(vr.getStatus() == VerificationResult.VERIFIED_REJECTED)
 				{
 					System.err.println("Failed to verify class: " + jc.getClassName() + "\n\n" + vr.getMessage());
-					continue;
-				}
-				for(int i = 0; i < jc.getMethods().length; i++)
-				{
-					vr = verifier.doPass3a(i);
-					if(vr.getStatus() == VerificationResult.VERIFIED_REJECTED)
-					{
-						System.err.println("Failed to verify class: " + jc.getClassName() + "\n\n" + vr.getMessage());
-						break;
-					}
-					vr = verifier.doPass3b(i);
-					if(vr.getStatus() == VerificationResult.VERIFIED_REJECTED)
-					{
-						System.err.println("Failed to verify class: " + jc.getClassName() + "\n\n" + vr.getMessage());
-						break;
-					}
+					break;
 				}
 			}
-			classes.forEach(clazz -> {
-				int index = clazz.getClassName().lastIndexOf(".") + 1;
+			
+			Arrays.stream(classes).forEach(clazz -> {
 				try
 				{
-					clazz.dump(new File("out/" + p.getKey() + "/" + clazz.getClassName().substring(index) + ".class"));
+					clazz.dump(new File("out/" + clazz.getClassName().replace('.', '$') + ".class"));
 				}
 				catch(Exception e)
 				{
@@ -165,9 +127,9 @@ public class CompilerCore
 				}
 			});
 			
-			copy(new File("lib"), new File("out"));
+			//copy(new File("lib"), new File("out"));
 			
-			String module = args.length > 1 ? args[args.length - 1] : roots.get(0).getKey();
+			//String module = args.length > 1 ? args[args.length - 1] : roots.get(0).getKey();
 			
 			/*File meta = new File("out/META-INF");
 			meta.mkdirs();
@@ -246,8 +208,8 @@ public class CompilerCore
 			catch(Exception e)
 			{
 				e.printStackTrace();
-			}
-		}*/
+			}*/
+		}
 	}
 	
 	private static boolean tryRead(List<String> strList, String fileName, int retryAmt)
@@ -279,9 +241,9 @@ public class CompilerCore
 		{
 			StatementNode sn = (StatementNode) node;
 			if(sn.isExpressionStatement())
-				sn.expression = simplifyExpression(sn.expression);
-			else if(sn.isReturnStatement() && sn.expression != null)
-				sn.expression = simplifyExpression(sn.expression);
+				sn.expressions.set(0, simplifyExpression(sn.expressions.get(0)));
+			else if(sn.isReturnStatement() && sn.expressions != null)
+				sn.expressions.set(0, simplifyExpression(sn.expressions.get(0)));
 		}
 		else if(node instanceof VariableDecNode)
 		{
@@ -311,8 +273,9 @@ public class CompilerCore
 					case POSITIVE:
 						return il;
 					case DECREMENT:
+						return simplifyExpression(new BinaryExpression(ue.expr, BinaryOp.SUBTRACT_ASSIGN, new IntLiteral(1, false)));
 					case INCREMENT:
-						break;
+						return simplifyExpression(new BinaryExpression(ue.expr, BinaryOp.ADD_ASSIGN, new IntLiteral(1, false)));
 					case NOT:
 						throw new CompilationException("Cannot perform boolean negation on integer");
 					default:
@@ -329,8 +292,9 @@ public class CompilerCore
 					case POSITIVE:
 						return fl;
 					case DECREMENT:
+						return simplifyExpression(new BinaryExpression(ue.expr, BinaryOp.SUBTRACT_ASSIGN, new FloatLiteral(1.0D, false)));
 					case INCREMENT:
-						break;
+						return simplifyExpression(new BinaryExpression(ue.expr, BinaryOp.ADD_ASSIGN, new FloatLiteral(1.0D, false)));
 					case UNARY_NEGATE:
 						throw new CompilationException("Cannot perform unary negation on floating point number");
 					case NOT:
@@ -932,8 +896,8 @@ public class CompilerCore
 						else if(expr instanceof LiteralExpression.ArrayLiteral)
 						{
 							LiteralExpression.ArrayLiteral al = (LiteralExpression.ArrayLiteral) expr;
-							for(int i = 0; i < al.literals.length; i++)
-								al.literals[i] = simplifyExpression(al.literals[i]);
+							for(int i = 0; i < al.expressions.length; i++)
+								al.expressions[i] = simplifyExpression(al.expressions[i]);
 							return al;
 						}
 					}

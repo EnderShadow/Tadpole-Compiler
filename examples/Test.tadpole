@@ -1,0 +1,12 @@
+int i = 0;
+int j = 1;
+IntPair temp = func(i, j);
+new IntPair(temp.j, temp.i);
+
+def func(int i1, int i2) : IntPair -> return new IntPair(i1, i2);
+
+struct IntPair(int i, int j)
+{
+	int i = i;
+	int j = j;
+}
