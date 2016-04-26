@@ -261,7 +261,7 @@ public abstract class LiteralExpression extends Expression.PrimaryExpression
 		
 		public StringLiteral(String stringLiteral)
 		{
-			value = escapeCharacters(stringLiteral);
+			value = escapeCharacters(stringLiteral.substring(1, stringLiteral.length() - 1));
 		}
 		
 		private String escapeCharacters(String str)

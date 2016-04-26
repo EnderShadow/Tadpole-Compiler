@@ -7,8 +7,10 @@ import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
 import org.apache.bcel.Constants;
+import org.apache.bcel.generic.ArrayType;
 import org.apache.bcel.generic.BasicType;
 import org.apache.bcel.generic.ClassGen;
+import org.apache.bcel.generic.ICONST;
 import org.apache.bcel.generic.InstructionFactory;
 import org.apache.bcel.generic.InstructionList;
 import org.apache.bcel.generic.MethodGen;
@@ -62,6 +64,15 @@ public class Module
 		mg.setMaxLocals();
 		mg.setMaxStack();
 		cg.addMethod(mg.getMethod());
+		
+		InstructionList il2 = new InstructionList();
+		MethodGen mg2 = new MethodGen(Constants.ACC_PUBLIC | Constants.ACC_STATIC, BasicType.VOID, new org.apache.bcel.generic.Type[]{new ArrayType(org.apache.bcel.generic.Type.STRING, 1)}, new String[]{"args"}, "main", cg.getClassName(), il2, cg.getConstantPool());
+		il2.append(new ICONST(1));
+		il2.append(new InstructionFactory(cg).createInvoke(cg.getClassName(), "__moduleInit__", BasicType.VOID, new org.apache.bcel.generic.Type[]{BasicType.BOOLEAN}, Constants.INVOKESTATIC));
+		il2.append(InstructionFactory.createReturn(mg2.getReturnType()));
+		mg2.setMaxLocals();
+		mg2.setMaxStack();
+		cg.addMethod(mg2.getMethod());
 		
 		classes.set(0, cg); // replace placeholder with module class
 		return classes;
@@ -118,6 +129,59 @@ public class Module
 					else if(!t.isPrimitive() && !t.isPrimitiveArray())
 					{
 						modules.stream().filter(module -> module.name.equals(t.getModuleName())).flatMap(module -> module.declaredStructs.stream()).filter(struct -> struct.name.equals(t.getTypeName())).findFirst().orElseThrow(() -> new CompilationException("Cannot find type in imported modules"));
+					}
+				}
+				
+				for(Function f : s.functions)
+				{
+					absolutifyTypes(f.statement, imports);
+					
+					parameters = f.parameters;
+					for(int i = 0; i < parameters.size(); i++)
+					{
+						Type t = parameters.get(i).getKey();
+						if(!t.isAbsoluteType() && !t.isPrimitive() && !t.isPrimitiveArray())
+						{
+							Optional<Struct> oStruct = imports.stream().flatMap(module -> module.declaredStructs.stream()).filter(struct -> struct.name.equals(t.typeName)).findFirst();
+							Type newT = Type.fromStruct(oStruct.orElseThrow(() -> new CompilationException("No struct with name '" + t.typeName + "' was imported")));
+							parameters.set(i, new Pair<Type, String>(newT, parameters.get(i).getValue()));
+						}
+						else if(!t.isPrimitive() && !t.isPrimitiveArray())
+						{
+							Optional<Struct> structt = modules.stream().filter(module -> module.name.equals(t.getModuleName())).flatMap(module -> module.declaredStructs.stream()).filter(struct -> struct.name.equals(t.getTypeName())).findFirst();
+							if(!structt.isPresent())
+							{
+								try
+								{
+									Class.forName(t.typeName);
+								}
+								catch(Exception e)
+								{
+									throw new CompilationException("Cannot find type in imported modules");
+								}
+							}
+						}
+					}
+					
+					if(!f.returnType.isAbsoluteType() && !f.returnType.isPrimitive() && !f.returnType.isPrimitiveArray())
+					{
+						Optional<Struct> oStruct = imports.stream().flatMap(module -> module.declaredStructs.stream()).filter(struct -> struct.name.equals(f.returnType.typeName)).findFirst();
+						f.returnType = Type.fromStruct(oStruct.orElseThrow(() -> new CompilationException("No struct with name '" + f.returnType.typeName + "' was imported")));
+					}
+					else if(!f.returnType.isPrimitive() && !f.returnType.isPrimitiveArray())
+					{
+						Optional<Struct> structt = modules.stream().filter(module -> module.name.equals(f.returnType.getModuleName())).flatMap(module -> module.declaredStructs.stream()).filter(struct -> struct.name.equals(f.returnType.getTypeName())).findFirst();
+						if(!structt.isPresent())
+						{
+							try
+							{
+								Class.forName(f.returnType.typeName);
+							}
+							catch(Exception e)
+							{
+								throw new CompilationException("Cannot find type in imported modules");
+							}
+						}
 					}
 				}
 			}
@@ -269,10 +333,10 @@ public class Module
 			else if(expr instanceof Expression.PrimaryExpression.FunctionCallExpression)
 			{
 				Expression.PrimaryExpression.FunctionCallExpression fce = (Expression.PrimaryExpression.FunctionCallExpression) expr;
-				if(fce.containingModule == null)
-					fce.containingModule = imports.get(0).name;
-				else if(imports.stream().map(module -> module.name).noneMatch(name -> name.equals(fce.containingModule)))
-					throw new CompilationException("Module '" + fce.containingModule + "' was not imported or does not exist");
+				if(fce.callingOn == null)
+					fce.callingOn = new Expression.PrimaryExpression.FieldAccessExpression(null, imports.get(0).name);
+				else
+					absolutifyTypes(fce.callingOn, imports);
 				for(Expression e : fce.parameters)
 					absolutifyTypes(e, imports);
 			}

@@ -18,6 +18,7 @@ import org.apache.bcel.generic.MethodGen;
 import javafx.util.Pair;
 import net.tadpole.compiler.ast.Expression;
 import net.tadpole.compiler.ast.FileNode;
+import net.tadpole.compiler.ast.FunctionDecNode;
 import net.tadpole.compiler.ast.ParameterListNode;
 import net.tadpole.compiler.ast.ParameterNode;
 import net.tadpole.compiler.ast.StructNode;
@@ -47,7 +48,9 @@ public class Struct
 				parameters = Collections.emptyList();
 			List<VariableDecNode> vdns = structNode.getChildren().stream().filter(n -> n instanceof VariableDecNode).map(n -> (VariableDecNode) n).collect(Collectors.toList());
 			List<Triplet<Type, String, Expression>> attributes = vdns.stream().map(vdn -> new Triplet<Type, String, Expression>(vdn.type, vdn.name, vdn.expression)).collect(Collectors.toList());
-			newStructs.add(new Struct(structNode.moduleName, structNode.name, parameters, attributes));
+			List<FunctionDecNode> fdns = structNode.getChildren().stream().filter(n -> n instanceof FunctionDecNode).map(n -> (FunctionDecNode) n).collect(Collectors.toList());
+			List<Function> functions = fdns.stream().map(Function::new).collect(Collectors.toList());
+			newStructs.add(new Struct(structNode.moduleName, structNode.name, parameters, attributes, functions));
 		}
 		structs.addAll(newStructs);
 		return newStructs;
@@ -57,13 +60,15 @@ public class Struct
 	public final String name;
 	public final List<Pair<Type, String>> parameters;
 	public final List<Triplet<Type, String, Expression>> attributes;
+	public final List<Function> functions;
 	
-	private Struct(String moduleName, String name, List<Pair<Type, String>> parameters, List<Triplet<Type, String, Expression>> attributes)
+	private Struct(String moduleName, String name, List<Pair<Type, String>> parameters, List<Triplet<Type, String, Expression>> attributes, List<Function> functions)
 	{
 		this.moduleName = moduleName;
 		this.name = name;
 		this.parameters = parameters;
 		this.attributes = attributes;
+		this.functions = functions;
 	}
 	
 	public ClassGen toBytecode()
@@ -74,6 +79,8 @@ public class Struct
 		
 		// add fields
 		Field[] fa = attributes.stream().map(triplet -> new FieldGen(Constants.ACC_PUBLIC, triplet.first.toBCELType(), triplet.second, cg.getConstantPool()).getField()).peek(cg::addField).toArray(Field[]::new);
+		
+		functions.stream().map(f -> f.toBytecode(cg).getMethod()).forEach(cg::addMethod);
 		
 		// <-- START CONSTRUCTOR -->
 		// create constructor

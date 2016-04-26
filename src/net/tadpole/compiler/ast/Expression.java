@@ -4,7 +4,13 @@ import java.util.Arrays;
 import java.util.List;
 import java.util.stream.Collectors;
 
+import org.antlr.v4.runtime.tree.TerminalNode;
 import org.apache.bcel.Constants;
+import org.apache.bcel.Repository;
+import org.apache.bcel.classfile.Field;
+import org.apache.bcel.classfile.JavaClass;
+import org.apache.bcel.classfile.Method;
+import org.apache.bcel.classfile.Utility;
 import org.apache.bcel.generic.ArrayType;
 import org.apache.bcel.generic.BasicType;
 import org.apache.bcel.generic.BranchHandle;
@@ -66,7 +72,7 @@ public abstract class Expression
 		else if(context.fieldName() != null)
 			return new PrimaryExpression.FieldAccessExpression(context.primary(), context.fieldName().getText());
 		else if(context.functionCall() != null)
-			return new PrimaryExpression.FunctionCallExpression(context.Identifier() != null ? context.Identifier().getText() : null, context.functionCall());
+			return new PrimaryExpression.FunctionCallExpression(convertPrimary(context.primary()), context.functionCall());
 		throw new CompilationException("Unknown primary expression: " + context.getText());
 	}
 	
@@ -345,9 +351,29 @@ public abstract class Expression
 				InstructionList il = new InstructionList();
 				InstructionFactory factory = new InstructionFactory(cg);
 				
+				try
+				{
+					return new Pair<InstructionList, org.apache.bcel.generic.Type>(null, org.apache.bcel.generic.Type.getType(Class.forName(toString())));
+				}
+				catch(Exception e) {}
+				
 				if(expression != null)
 				{
 					Pair<InstructionList, org.apache.bcel.generic.Type> exprBytecode = expression.toBytecode(cg, mg);
+					
+					if(exprBytecode.getKey() == null)
+					{
+						try
+						{
+							Field fieldd = Arrays.stream(Repository.lookupClass(exprBytecode.getValue().toString()).getFields()).filter(f -> f.getName().equals(field)).findFirst().get();
+							il.append(factory.createGetStatic(exprBytecode.getValue().toString(), field, fieldd.getType()));
+							return new Pair<InstructionList, org.apache.bcel.generic.Type>(il, fieldd.getType());
+						}
+						catch(Exception e)
+						{
+							
+						}
+					}
 					
 					for(Struct struct : Struct.structs)
 					{
@@ -372,12 +398,29 @@ public abstract class Expression
 				else
 				{
 					LocalVariableGen lvg = MethodUtils.getLocalVars(mg).stream().filter(lv -> lv.getName().equals(field) && lv.getEnd() == null).findFirst().orElse(null);
-					if(lvg == null)
-						throw new CompilationException("Could not find local variable '" + field + "' in method " + mg.getName());
-					
-					il.append(InstructionFactory.createLoad(lvg.getType(), lvg.getIndex()));
-					
-					return new Pair<InstructionList, org.apache.bcel.generic.Type>(il, lvg.getType());
+					if(lvg != null)
+					{
+						il.append(InstructionFactory.createLoad(lvg.getType(), lvg.getIndex()));
+						return new Pair<InstructionList, org.apache.bcel.generic.Type>(il, lvg.getType());
+					}
+					else if(Arrays.stream(cg.getFields()).map(Field::getName).anyMatch(s -> s.equals(field)))
+					{
+						Field fieldd = Arrays.stream(cg.getFields()).filter(f -> f.getName().equals(field)).findFirst().get();
+						il.append(InstructionFactory.createThis());
+						il.append(factory.createGetField(cg.getClassName(), field, fieldd.getType()));
+						return new Pair<InstructionList, org.apache.bcel.generic.Type>(il, fieldd.getType());
+					}
+					else
+					{
+						try
+						{
+							return new Pair<InstructionList, org.apache.bcel.generic.Type>(null, org.apache.bcel.generic.Type.getType(Class.forName(field)));
+						}
+						catch(Exception e)
+						{
+							return new Pair<InstructionList, org.apache.bcel.generic.Type>(null, new Type(field).toBCELType());
+						}
+					}
 				}
 			}
 			
@@ -422,10 +465,26 @@ public abstract class Expression
 				else
 				{
 					LocalVariableGen lvg = MethodUtils.getLocalVars(mg).stream().filter(lv -> lv.getName().equals(field) && lv.getEnd() == null).findFirst().orElse(null);
-					if(lvg == null)
-						throw new CompilationException("Could not find local variable '" + field + "' in method " + mg.getName());
 					
 					Pair<InstructionList, org.apache.bcel.generic.Type> valueToStoreBytecode = valueToStore.toBytecode(cg, mg);
+					
+					if(lvg == null)
+					{
+						if(Arrays.stream(cg.getFields()).map(Field::getName).anyMatch(s -> s.equals(field)))
+						{
+							Field fieldd = Arrays.stream(cg.getFields()).filter(f -> f.getName().equals(field)).findFirst().get();
+							il.append(InstructionFactory.createThis());
+							il.append(valueToStoreBytecode.getKey());
+							if(valueToStoreBytecode.getValue().getSize() == 2)
+								il.append(InstructionConstants.DUP2);
+							else
+								il.append(InstructionConstants.DUP);
+							il.append(TypeUtils.cast(valueToStoreBytecode.getValue(), fieldd.getType(), factory));
+							il.append(factory.createPutField(cg.getClassName(), field, fieldd.getType()));
+							return new Pair<InstructionList, org.apache.bcel.generic.Type>(il, valueToStoreBytecode.getValue());
+						}
+						throw new CompilationException("Could not find local variable '" + field + "' in method " + mg.getName());
+					}
 					
 					il.append(valueToStoreBytecode.getKey());
 					if(valueToStoreBytecode.getValue().getSize() == 2)
@@ -485,7 +544,22 @@ public abstract class Expression
 				{
 					LocalVariableGen lvg = MethodUtils.getLocalVars(mg).stream().filter(lv -> lv.getName().equals(field) && lv.getEnd() == null).findFirst().orElse(null);
 					if(lvg == null)
+					{
+						if(Arrays.stream(cg.getFields()).map(Field::getName).anyMatch(s -> s.equals(field)))
+						{
+							Field fieldd = Arrays.stream(cg.getFields()).filter(f -> f.getName().equals(field)).findFirst().get();
+							il.append(InstructionFactory.createThis());
+							if(tosType.getSize() == 2)
+								il.append(InstructionConstants.DUP_X2);
+							else
+								il.append(InstructionConstants.DUP_X1);
+							il.append(InstructionConstants.POP);
+							il.append(TypeUtils.cast(tosType, fieldd.getType(), factory));
+							il.append(factory.createPutField(cg.getClassName(), field, fieldd.getType()));
+							return new Pair<InstructionList, org.apache.bcel.generic.Type>(il, tosType);
+						}
 						throw new CompilationException("Could not find local variable '" + field + "' in method " + mg.getName());
+					}
 					
 					il.append(TypeUtils.cast(tosType, lvg.getType(), factory));
 					il.append(InstructionFactory.createStore(lvg.getType(), lvg.getIndex()));
@@ -493,31 +567,23 @@ public abstract class Expression
 					return new Pair<InstructionList, org.apache.bcel.generic.Type>(il, BasicType.VOID);
 				}
 			}
+			
+			@Override
+			public String toString()
+			{
+				return expression == null ? field : (expression.toString() + "." + field);
+			}
 		}
 		
 		public static class FunctionCallExpression extends PrimaryExpression
 		{
-			public String containingModule;
+			public PrimaryExpression callingOn;
 			public final String function;
 			public final Expression[] parameters;
 			
-			public FunctionCallExpression(String containingModule, String function, Expression[] parameters)
+			private FunctionCallExpression(PrimaryExpression callingOn, TadpoleParser.FunctionCallContext context)
 			{
-				this.containingModule = containingModule;
-				this.function = function;
-				this.parameters = Arrays.copyOf(parameters, parameters.length);
-			}
-			
-			public FunctionCallExpression(String containingModule, String function, List<Expression> parameters)
-			{
-				this.containingModule = containingModule;
-				this.function = function;
-				this.parameters = parameters.toArray(new Expression[parameters.size()]);
-			}
-			
-			private FunctionCallExpression(String containingModule, TadpoleParser.FunctionCallContext context)
-			{
-				this.containingModule = containingModule;
+				this.callingOn = callingOn;
 				this.function = context.functionName().getText();
 				this.parameters = context.expressionList() != null ? context.expressionList().expression().stream().map(Expression::convert).toArray(Expression[]::new) : new Expression[0];
 			}
@@ -525,26 +591,147 @@ public abstract class Expression
 			@Override
 			public Pair<InstructionList, org.apache.bcel.generic.Type> toBytecode(ClassGen cg, MethodGen mg)
 			{
-				String module = containingModule != null ? containingModule : cg.getClassName();
-				List<Function> functions = Module.getModule(module).declaredFunctions;
-				functions = functions.stream().filter(f -> f.name.equals(function)).collect(Collectors.toList());
-				List<Pair<InstructionList, org.apache.bcel.generic.Type>> parameters = Arrays.stream(this.parameters).map(e -> e.toBytecode(cg, mg)).collect(Collectors.toList()); 
-				functions.removeIf(f -> !TypeUtils.areMatching(f.parameters.stream().map(p -> p.getKey().toBCELType()).collect(Collectors.toList()), parameters.stream().map(Pair::getValue).collect(Collectors.toList())));
-				if(functions.size() == 0)
-					throw new CompilationException("No function named " + function + " with with correct parameters was found in module " + module);
-				Function f = TypeUtils.findClosestMatch(functions, parameters.stream().map(Pair::getValue).collect(Collectors.toList()));
-				InstructionFactory factory = new InstructionFactory(cg);
-				
-				InstructionList il = new InstructionList();
-				for(int i = 0; i < parameters.size(); i++)
+				boolean staticCall;
+				InstructionList callingOnBytecode = null;
+				org.apache.bcel.generic.Type type = null;
+				if(callingOn != null)
 				{
-					Pair<InstructionList, org.apache.bcel.generic.Type> eBytecode = parameters.get(i);
-					il.append(eBytecode.getKey());
-					il.append(TypeUtils.cast(eBytecode.getValue(), f.parameters.get(i).getKey().toBCELType(), factory));
+					Pair<InstructionList, org.apache.bcel.generic.Type> bytecode = callingOn.toBytecode(cg, mg);
+					callingOnBytecode = bytecode.getKey();
+					type = bytecode.getValue();
+					staticCall = callingOnBytecode == null;
 				}
-				il.append(factory.createInvoke(module, function, f.returnType.toBCELType(), f.parameters.stream().map(p -> p.getKey().toBCELType()).toArray(org.apache.bcel.generic.Type[]::new), Constants.INVOKESTATIC));
+				else
+				{
+					staticCall = true;
+					type = org.apache.bcel.generic.Type.getType(Utility.getSignature(cg.getClassName()));
+				}
 				
-				return new Pair<InstructionList, org.apache.bcel.generic.Type>(il, f.returnType.toBCELType());
+				List<Pair<InstructionList, org.apache.bcel.generic.Type>> parameters = Arrays.stream(this.parameters).map(e -> e.toBytecode(cg, mg)).collect(Collectors.toList());
+				if(callingOnBytecode == null)
+				{
+					InstructionList il = new InstructionList();
+					try
+					{
+						JavaClass jc = Repository.lookupClass(type.toString());
+						List<Method> methods = Arrays.stream(jc.getMethods()).filter(m -> m.getName().equals(function)).filter(m -> m.isStatic()).collect(Collectors.toList());
+						methods.removeIf(m -> m.getArgumentTypes().length != parameters.size());
+						Method bestMethod = TypeUtils.findClosestMatch(methods, parameters.stream().map(Pair::getValue).collect(Collectors.toList()), null);
+						
+						InstructionFactory factory = new InstructionFactory(cg);
+						
+						for(int i = 0; i < parameters.size(); i++)
+						{
+							Pair<InstructionList, org.apache.bcel.generic.Type> eBytecode = parameters.get(i);
+							il.append(eBytecode.getKey());
+							il.append(TypeUtils.cast(eBytecode.getValue(), bestMethod.getArgumentTypes()[i], factory));
+						}
+						il.append(factory.createInvoke(type.toString(), function, bestMethod.getReturnType(), bestMethod.getArgumentTypes(), Constants.INVOKESTATIC));
+						
+						return new Pair<InstructionList, org.apache.bcel.generic.Type>(il, bestMethod.getReturnType());
+					}
+					catch(Exception e)
+					{
+						Type tempType = new Type(type.toString());
+						if(!tempType.isAbsoluteType())
+						{
+							String module = tempType.typeName;
+							List<Function> functions = Module.getModule(module).declaredFunctions;
+							functions = functions.stream().filter(f -> f.name.equals(function)).collect(Collectors.toList());
+							functions.removeIf(f -> !TypeUtils.areMatching(f.parameters.stream().map(p -> p.getKey().toBCELType()).collect(Collectors.toList()), parameters.stream().map(Pair::getValue).collect(Collectors.toList())));
+							if(functions.size() == 0)
+								throw new CompilationException("No function named " + function + " with with correct parameters was found in module " + module);
+							Function f = TypeUtils.findClosestMatch(functions, parameters.stream().map(Pair::getValue).collect(Collectors.toList()));
+							
+							InstructionFactory factory = new InstructionFactory(cg);
+							
+							for(int i = 0; i < parameters.size(); i++)
+							{
+								Pair<InstructionList, org.apache.bcel.generic.Type> eBytecode = parameters.get(i);
+								il.append(eBytecode.getKey());
+								il.append(TypeUtils.cast(eBytecode.getValue(), f.parameters.get(i).getKey().toBCELType(), factory));
+							}
+							il.append(factory.createInvoke(module, function, f.returnType.toBCELType(), f.parameters.stream().map(p -> p.getKey().toBCELType()).toArray(org.apache.bcel.generic.Type[]::new), Constants.INVOKESTATIC));
+							
+							return new Pair<InstructionList, org.apache.bcel.generic.Type>(il, f.returnType.toBCELType());
+						}
+						else
+						{
+							throw new CompilationException("All struct functions are instance functions. Move the function to a module or create an instance of the struct first."); 
+						}
+					}
+				}
+				else
+				{
+					InstructionList il = new InstructionList();
+					il.append(callingOnBytecode);
+					try
+					{
+						JavaClass jc = Repository.lookupClass(type.toString());
+						List<Method> methods = Arrays.stream(jc.getMethods()).filter(m -> m.getName().equals(function)).filter(m -> !staticCall || m.isStatic()).collect(Collectors.toList());
+						methods.removeIf(m -> m.getArgumentTypes().length != parameters.size());
+						Method bestMethod = TypeUtils.findClosestMatch(methods, parameters.stream().map(Pair::getValue).collect(Collectors.toList()), null);
+						
+						InstructionFactory factory = new InstructionFactory(cg);
+						
+						for(int i = 0; i < parameters.size(); i++)
+						{
+							Pair<InstructionList, org.apache.bcel.generic.Type> eBytecode = parameters.get(i);
+							il.append(eBytecode.getKey());
+							il.append(TypeUtils.cast(eBytecode.getValue(), bestMethod.getArgumentTypes()[i], factory));
+						}
+						il.append(factory.createInvoke(type.toString(), function, bestMethod.getReturnType(), bestMethod.getArgumentTypes(), bestMethod.isStatic() ? Constants.INVOKESTATIC : Constants.INVOKEVIRTUAL));
+						
+						return new Pair<InstructionList, org.apache.bcel.generic.Type>(il, bestMethod.getReturnType());
+					}
+					catch(Exception e)
+					{
+						Type tempType = new Type(type.toString());
+						if(!tempType.isAbsoluteType())
+						{
+							String module = tempType.typeName;
+							List<Function> functions = Module.getModule(module).declaredFunctions;
+							functions = functions.stream().filter(f -> f.name.equals(function)).collect(Collectors.toList());
+							functions.removeIf(f -> !TypeUtils.areMatching(f.parameters.stream().map(p -> p.getKey().toBCELType()).collect(Collectors.toList()), parameters.stream().map(Pair::getValue).collect(Collectors.toList())));
+							if(functions.size() == 0)
+								throw new CompilationException("No function named " + function + " with with correct parameters was found in module " + module);
+							Function f = TypeUtils.findClosestMatch(functions, parameters.stream().map(Pair::getValue).collect(Collectors.toList()));
+							
+							InstructionFactory factory = new InstructionFactory(cg);
+							
+							for(int i = 0; i < parameters.size(); i++)
+							{
+								Pair<InstructionList, org.apache.bcel.generic.Type> eBytecode = parameters.get(i);
+								il.append(eBytecode.getKey());
+								il.append(TypeUtils.cast(eBytecode.getValue(), f.parameters.get(i).getKey().toBCELType(), factory));
+							}
+							il.append(factory.createInvoke(module, function, f.returnType.toBCELType(), f.parameters.stream().map(p -> p.getKey().toBCELType()).toArray(org.apache.bcel.generic.Type[]::new), Constants.INVOKESTATIC));
+							
+							return new Pair<InstructionList, org.apache.bcel.generic.Type>(il, f.returnType.toBCELType());
+						}
+						else
+						{
+							List<Function> functions = Module.getModule(tempType.getModuleName()).declaredStructs.stream().filter(s -> s.name.equals(tempType.getTypeName())).findFirst().get().functions;
+							functions = functions.stream().filter(f -> f.name.equals(function)).collect(Collectors.toList());
+							functions.removeIf(f -> !TypeUtils.areMatching(f.parameters.stream().map(p -> p.getKey().toBCELType()).collect(Collectors.toList()), parameters.stream().map(Pair::getValue).collect(Collectors.toList())));
+							if(functions.size() == 0)
+								throw new CompilationException("No function named " + function + " with with correct parameters was found in struct " + tempType.typeName);
+							Function f = TypeUtils.findClosestMatch(functions, parameters.stream().map(Pair::getValue).collect(Collectors.toList()));
+							
+							InstructionFactory factory = new InstructionFactory(cg);
+							
+							for(int i = 0; i < parameters.size(); i++)
+							{
+								Pair<InstructionList, org.apache.bcel.generic.Type> eBytecode = parameters.get(i);
+								il.append(eBytecode.getKey());
+								il.append(TypeUtils.cast(eBytecode.getValue(), f.parameters.get(i).getKey().toBCELType(), factory));
+							}
+							il.append(factory.createInvoke(type.toString(), function, f.returnType.toBCELType(), f.parameters.stream().map(p -> p.getKey().toBCELType()).toArray(org.apache.bcel.generic.Type[]::new), Constants.INVOKEVIRTUAL));
+							
+							return new Pair<InstructionList, org.apache.bcel.generic.Type>(il, f.returnType.toBCELType());
+						}
+					}
+				}
 			}
 		}
 	}
@@ -818,7 +1005,7 @@ public abstract class Expression
 						else if(tLeft instanceof ReferenceType && !tLeft.equals(new ArrayType(BasicType.CHAR, 1)))
 							tLeft = org.apache.bcel.generic.Type.OBJECT;
 						il.append(ilLeft);
-						il.append(factory.createInvoke("java.lang.String", "valueOf", org.apache.bcel.generic.Type.STRING, new org.apache.bcel.generic.Type[]{tRight}, Constants.INVOKESTATIC));
+						il.append(factory.createInvoke("java.lang.String", "valueOf", org.apache.bcel.generic.Type.STRING, new org.apache.bcel.generic.Type[]{tLeft}, Constants.INVOKESTATIC));
 						il.append(ilRight);
 						il.append(factory.createInvoke("java.lang.String", "concat", org.apache.bcel.generic.Type.STRING, new org.apache.bcel.generic.Type[]{org.apache.bcel.generic.Type.STRING}, Constants.INVOKEVIRTUAL));
 					}

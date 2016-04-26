@@ -13,6 +13,7 @@ import org.apache.bcel.generic.MethodGen;
 import org.apache.bcel.generic.ReturnInstruction;
 
 import javafx.util.Pair;
+import net.tadpole.compiler.ast.FileNode;
 import net.tadpole.compiler.ast.FunctionDecNode;
 import net.tadpole.compiler.ast.ParameterListNode;
 import net.tadpole.compiler.ast.ParameterNode;
@@ -24,12 +25,14 @@ public class Function
 	public final List<Pair<Type, String>> parameters;
 	public Type returnType;
 	public final Statement statement;
+	public final boolean isStatic;
 	
-	public Function(String name, List<Pair<Type, String>> parameters, Type returnType, Statement statement)
+	public Function(String name, List<Pair<Type, String>> parameters, Type returnType, boolean isStatic, Statement statement)
 	{
 		this.name = name;
 		this.parameters = parameters;
 		this.returnType = returnType;
+		this.isStatic = isStatic;
 		this.statement = statement;
 	}
 	
@@ -43,6 +46,7 @@ public class Function
 			parameters = Collections.emptyList();
 		returnType = fdn.returnType;
 		statement = fdn.getChildren().stream().filter(n -> n instanceof StatementNode).map(n -> Statement.convert((StatementNode) n)).findFirst().get();
+		isStatic = fdn.getParent() instanceof FileNode;
 	}
 	
 	@Override
@@ -66,7 +70,10 @@ public class Function
 	public MethodGen toBytecode(ClassGen cg)
 	{
 		InstructionList il = new InstructionList();
-		MethodGen mg = new MethodGen(Constants.ACC_PUBLIC | Constants.ACC_STATIC, returnType.toBCELType(), parameters.stream().map(p -> p.getKey().toBCELType()).toArray(org.apache.bcel.generic.Type[]::new), parameters.stream().map(Pair::getValue).toArray(String[]::new), name, cg.getClassName(), il, cg.getConstantPool());
+		int flags = Constants.ACC_PUBLIC;
+		if(isStatic)
+			flags |= Constants.ACC_STATIC;
+		MethodGen mg = new MethodGen(flags, returnType.toBCELType(), parameters.stream().map(p -> p.getKey().toBCELType()).toArray(org.apache.bcel.generic.Type[]::new), parameters.stream().map(Pair::getValue).toArray(String[]::new), name, cg.getClassName(), il, cg.getConstantPool());
 		il.append(statement.toBytecode(cg, mg));
 		if(!(il.getEnd().getInstruction() instanceof ReturnInstruction))
 			il.append(InstructionFactory.createReturn(mg.getReturnType()));

@@ -50,7 +50,7 @@ public class Type
 	
 	public boolean isAbsoluteType()
 	{
-		return typeName.contains(".");
+		return typeName.contains(".") || typeName.contains("$");
 	}
 	
 	public Type getAbsoluteType(String moduleIfRelative)
@@ -63,14 +63,16 @@ public class Type
 		if(isPrimitive())
 			return null;
 		if(isAbsoluteType())
-			return typeName.substring(0, typeName.indexOf("."));
+			return typeName.indexOf(".") != -1 ? typeName.substring(0, typeName.indexOf(".")) : typeName.substring(0, typeName.indexOf("$"));
 		throw new CompilationException("Cannot get module from non-absolute type");
 	}
 	
 	public String getTypeName()
 	{
+		if(isPrimitive())
+			return typeName;
 		if(isAbsoluteType())
-			return typeName.substring(typeName.indexOf(".") + 1);
+			return typeName.indexOf(".") != -1 ? typeName.substring(typeName.indexOf(".") + 1) : typeName.substring(typeName.indexOf("$") + 1);
 		return typeName;
 	}
 	

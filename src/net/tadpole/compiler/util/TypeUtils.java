@@ -1,9 +1,11 @@
 package net.tadpole.compiler.util;
 
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 import java.util.stream.Collectors;
 
+import org.apache.bcel.classfile.Method;
 import org.apache.bcel.generic.ArrayType;
 import org.apache.bcel.generic.BasicType;
 import org.apache.bcel.generic.ConstantPoolGen;
@@ -137,6 +139,56 @@ public class TypeUtils
 		if(bestFunctions.size() > 1)
 			throw new CompilationException("Ambiguous function call with name '" + bestFunctions.get(0).name + "' and " + argTypes.size() + " parameters");
 		return bestFunctions.get(0);
+	}
+	
+	public static Method findClosestMatch(List<Method> possibilities, List<Type> argTypes, Void notUsed)
+	{
+		List<Method> bestMethods = new ArrayList<Method>();
+		int numCasts = argTypes.size() + 1;
+		for(Method method : possibilities)
+		{
+			int casts = 0;
+			List<Type> paramTypes = Arrays.asList(method.getArgumentTypes());
+			for(int i = 0; i < argTypes.size(); i++)
+				if(!paramTypes.get(i).equals(argTypes.get(i)))
+					casts++;
+			if(casts < numCasts)
+			{
+				numCasts = casts;
+				bestMethods.clear();
+				bestMethods.add(method);
+			}
+			else if(casts == numCasts)
+			{
+				bestMethods.add(method);
+			}
+		}
+		possibilities = bestMethods;
+		bestMethods = new ArrayList<Method>();
+		InstructionFactory dummyFactory = new InstructionFactory(new ConstantPoolGen());
+		numCasts = argTypes.size() + 1;
+		for(Method method : possibilities)
+		{
+			int casts = 0;
+			List<Type> paramTypes = Arrays.asList(method.getArgumentTypes());
+			for(int i = 0; i < argTypes.size(); i++)
+				if(!cast(argTypes.get(i), paramTypes.get(i), dummyFactory).isEmpty())
+					casts++;
+			if(casts < numCasts)
+			{
+				numCasts = casts;
+				bestMethods.clear();
+				bestMethods.add(method);
+			}
+			else if(casts == numCasts)
+			{
+				bestMethods.add(method);
+			}
+		}
+		
+		if(bestMethods.size() > 1)
+			throw new CompilationException("Ambiguous function call with name '" + bestMethods.get(0).getName() + "' and " + argTypes.size() + " parameters");
+		return bestMethods.get(0);
 	}
 	
 	public static ArrayType getArrayType(List<Type> types)

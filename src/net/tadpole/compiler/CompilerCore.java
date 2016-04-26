@@ -915,6 +915,9 @@ public class CompilerCore
 	
 	private static boolean findParallelAssign(Expression expr)
 	{
+		if(expr == null)
+			return false;
+		
 		if(expr instanceof BinaryExpression)
 		{
 			BinaryExpression be = (BinaryExpression) expr;

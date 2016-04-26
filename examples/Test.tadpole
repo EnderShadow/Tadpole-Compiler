@@ -2,6 +2,10 @@ int i = 0;
 int j = 1;
 IntPair temp = func(i, j);
 new IntPair(temp.j, temp.i);
+temp = temp.add(temp);
+java.lang.System.out.println(i);
+java.lang.System.out.println(j);
+java.lang.System.out.println(temp.toString());
 
 def func(int i1, int i2) : IntPair -> return new IntPair(i1, i2);
 
@@ -9,4 +13,8 @@ struct IntPair(int i, int j)
 {
 	int i = i;
 	int j = j;
+	
+	def add(IntPair other) : IntPair -> return new IntPair(i + other.i, j + other.j);
+	
+	def toString() : java.lang.String -> return i + " and " + j;
 }
