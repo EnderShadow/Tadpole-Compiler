@@ -6,6 +6,10 @@ temp = temp.add(temp);
 java.lang.System.out.println(i);
 java.lang.System.out.println(j);
 java.lang.System.out.println(temp.toString());
+i <- j;
+j <- i;
+java.lang.System.out.println(i);
+java.lang.System.out.println(j);
 
 def func(int i1, int i2) : IntPair -> return new IntPair(i1, i2);
 
