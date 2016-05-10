@@ -1,0 +1,70 @@
+char[] code = ".++.-.++-.>++>.<.>>>+++++[.-].,>,[-<+>]<.".toCharArray();
+char[] data = new char[100];
+int pointer = 0;
+int index = 0;
+while(index < code.length)
+{
+	char instr = code[index];
+	if(instr == '+')
+	{
+		data[pointer] += 1;
+	}
+	else if(instr == '-')
+	{
+		data[pointer] -= 1;
+	}
+	else if(instr == '>')
+	{
+		pointer += 1;
+	}
+	else if(instr == '<')
+	{
+		pointer -= 1;
+	}
+	else if(instr == '.')
+	{
+		java.lang.System.out.print(data[pointer]);
+	}
+	else if(instr == ',')
+	{
+		# read input
+	}
+	else if(instr == '[')
+	{
+		if(data[pointer] == 0)
+		{
+			int count = 0;
+			boolean found = false;
+			while(index < code.length && found == false)
+			{
+				if(code[index] == '[')
+					count += 1;
+				else if(code[index] == ']')
+					count += 1;
+				if(count == 0)
+					found = true;
+				else
+					index += 1;
+			}
+		}
+	}
+	else if(instr == ']')
+	{
+		int count = 0;
+		boolean found = false;
+		while(index > 0 && found == false)
+		{
+			if(code[index] == '[')
+				count += 1;
+			else if(code[index] == ']')
+				count -= 1;
+			if(count == 0)
+				found = true;
+			else
+				index -= 1;
+		}
+		index -= 1;
+	}
+	
+	index += 1;
+}

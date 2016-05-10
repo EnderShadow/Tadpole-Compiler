@@ -11,6 +11,7 @@ import org.apache.bcel.classfile.Field;
 import org.apache.bcel.classfile.JavaClass;
 import org.apache.bcel.classfile.Method;
 import org.apache.bcel.classfile.Utility;
+import org.apache.bcel.generic.ARRAYLENGTH;
 import org.apache.bcel.generic.ArrayType;
 import org.apache.bcel.generic.BasicType;
 import org.apache.bcel.generic.BranchHandle;
@@ -40,6 +41,7 @@ import net.tadpole.compiler.Type;
 import net.tadpole.compiler.exceptions.CompilationException;
 import net.tadpole.compiler.parser.TadpoleParser;
 import net.tadpole.compiler.util.MethodUtils;
+import net.tadpole.compiler.util.StringUtils;
 import net.tadpole.compiler.util.Triplet;
 import net.tadpole.compiler.util.TypeUtils;
 
@@ -61,8 +63,10 @@ public abstract class Expression
 			return null;
 		if(context.literal() != null)
 			return PrimaryExpression.parseLiteral(context.literal());
-		else if(context.dimension() != null)
-			return new PrimaryExpression.ArrayAccessExpression(convertPrimary(context.primary()), context.dimension());
+		else if(context.dimension() != null && context.dimension().size() == 1 && context.primary() != null)
+			return new PrimaryExpression.ArrayAccessExpression(convertPrimary(context.primary()), context.dimension(0));
+		else if(context.type() != null && context.dimension() != null && context.dimension().size() > 0)
+			return new PrimaryExpression.ArrayInstantiationExpression(new Type(context.type().getText()), context.dimension(), context.emptyDimension().size());
 		else if(context.type() != null)
 			return new PrimaryExpression.CastExpression(new Type(context.type().getText()), context.primary() != null ? convertPrimary(context.primary()) : convertUnary(context.unaryExpression()));
 		else if(context.objType() != null)
@@ -80,7 +84,7 @@ public abstract class Expression
 	{
 		if(context.unaryOp() != null)
 			return new UnaryExpression(UnaryOp.resolve(context.unaryOp().getText()), Expression.convert(context.expression()));
-		return new UnaryExpression(UnaryOp.resolve(context.prefixPostfixOp().getText()), Expression.convert(context.expression()), context.getChild(1) instanceof TadpoleParser.PrefixPostfixOpContext);
+		return new UnaryExpression(UnaryOp.resolve(context.prefixPostfixOp().getText()), Expression.convertPrimary(context.primary()), context.getChild(1) instanceof TadpoleParser.PrefixPostfixOpContext);
 	}
 	
 	public static BinaryExpression convertBinary(TadpoleParser.ExpressionContext exprContextLeft, BinaryOp op, TadpoleParser.ExpressionContext exprContextRight)
@@ -261,6 +265,50 @@ public abstract class Expression
 			}
 		}
 		
+		public static class ArrayInstantiationExpression extends PrimaryExpression
+		{
+			public Type structType;
+			public final int numDimensions;
+			public final Expression[] dimensionSizes;
+			
+			private ArrayInstantiationExpression(Type type, List<TadpoleParser.DimensionContext> context, int numEmptyDimensions)
+			{
+				if(type.isArray())
+					throw new CompilationException("Invalid array type: " + type + context.stream().map(c -> c.getText()).collect(Collectors.joining()) + StringUtils.multiply("[]", numEmptyDimensions));
+				structType = type;
+				numDimensions = context.size() + numEmptyDimensions;
+				dimensionSizes = context.stream().map(d -> d.expression()).map(Expression::convert).toArray(Expression[]::new);
+			}
+			
+			@Override
+			public Pair<InstructionList, org.apache.bcel.generic.Type> toBytecode(ClassGen cg, MethodGen mg)
+			{
+				InstructionList il = new InstructionList();
+				InstructionFactory factory = new InstructionFactory(cg);
+				
+				org.apache.bcel.generic.Type type;
+				try
+				{
+					type = org.apache.bcel.generic.Type.getType(Class.forName(structType.typeName));
+				}
+				catch(Exception e)
+				{
+					if(structType.isPrimitive())
+						type = structType.toBCELType();
+					else
+						type = Type.fromStruct(Struct.structs.stream().filter(s -> s.moduleName.equals(structType.getModuleName())).filter(s -> s.name.equals(structType.getTypeName())).findFirst().get()).toBCELType();
+				}
+				if(numDimensions - dimensionSizes.length > 0)
+					type = new ArrayType(type, numDimensions - dimensionSizes.length);
+				
+				for(Expression e : dimensionSizes)
+					il.append(e.toBytecode(cg, mg).getKey());
+				il.append(factory.createNewArray(type, (short) dimensionSizes.length));
+				
+				return new Pair<InstructionList, org.apache.bcel.generic.Type>(il, new ArrayType(type, dimensionSizes.length));
+			}
+		}
+		
 		public static class InstantiationExpression extends PrimaryExpression
 		{
 			public Type structType;
@@ -391,6 +439,14 @@ public abstract class Expression
 							il.append(factory.createGetField(exprBytecode.getValue().toString(), field, attribute.first.toBCELType()));
 							return new Pair<InstructionList, org.apache.bcel.generic.Type>(il, attribute.first.toBCELType());
 						}
+					}
+					
+					org.apache.bcel.generic.Type type = exprBytecode.getValue();
+					if(type instanceof ArrayType && field.equals("length"))
+					{
+						il.append(exprBytecode.getKey());
+						il.append(new ARRAYLENGTH());
+						return new Pair<InstructionList, org.apache.bcel.generic.Type>(il, BasicType.INT);
 					}
 					
 					throw new CompilationException("Could not find attribute '" + field + "' in struct " + exprBytecode.getValue().toString());

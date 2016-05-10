@@ -321,6 +321,21 @@ public class Module
 				for(Expression e : ie.parameters)
 					absolutifyTypes(e, imports);
 			}
+			else if(expr instanceof Expression.PrimaryExpression.ArrayInstantiationExpression)
+			{
+				Expression.PrimaryExpression.ArrayInstantiationExpression aie = (Expression.PrimaryExpression.ArrayInstantiationExpression) expr;
+				if(!aie.structType.isAbsoluteType() && !aie.structType.isPrimitive() && !Type.isPrimitiveArray(aie.structType))
+				{
+					Optional<Struct> oStruct = imports.stream().flatMap(module -> module.declaredStructs.stream()).filter(struct -> struct.name.equals(aie.structType.typeName)).findFirst();
+					aie.structType = Type.fromStruct(oStruct.orElseThrow(() -> new CompilationException("No struct with name '" + aie.structType.typeName + "' was imported")));
+				}
+				else if(!aie.structType.isPrimitive() && !Type.isPrimitiveArray(aie.structType))
+				{
+					modules.stream().filter(module -> module.name.equals(aie.structType.getModuleName())).flatMap(module -> module.declaredStructs.stream()).filter(struct -> struct.name.equals(aie.structType.getTypeName())).findFirst().orElseThrow(() -> new CompilationException("Cannot find type in imported modules"));
+				}
+				for(Expression e : aie.dimensionSizes)
+					absolutifyTypes(e, imports);
+			}
 			else if(expr instanceof Expression.PrimaryExpression.WrapExpression)
 			{
 				absolutifyTypes(((Expression.PrimaryExpression.WrapExpression) expr).expression, imports);

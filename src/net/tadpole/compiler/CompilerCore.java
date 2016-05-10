@@ -44,7 +44,7 @@ public class CompilerCore
 		
 		//System.exit(0);
 		
-		args = new String[]{"examples/Test.tadpole"};
+		args = new String[]{"examples/Test.tadpole", "examples/Brainfuck.tadpole"};
 		for(int i = 0; i < args.length; i++)
 			args[i] = args[i].replace('\\', '/');
 		
@@ -241,9 +241,34 @@ public class CompilerCore
 		{
 			StatementNode sn = (StatementNode) node;
 			if(sn.isExpressionStatement())
+			{
 				sn.expressions.set(0, simplifyExpression(sn.expressions.get(0)));
+			}
 			else if(sn.isReturnStatement() && sn.expressions != null)
+			{
 				sn.expressions.set(0, simplifyExpression(sn.expressions.get(0)));
+			}
+			else if(sn.isBlockStatement())
+			{
+				sn.statements.forEach(CompilerCore::simplifyNodes);
+			}
+			else if(sn.isIfStatement())
+			{
+				sn.expressions.set(0, simplifyExpression(sn.expressions.get(0)));
+				sn.statements.forEach(CompilerCore::simplifyNodes);
+			}
+			else if(sn.isWhileStatement())
+			{
+				sn.expressions.set(0, simplifyExpression(sn.expressions.get(0)));
+				simplifyNodes(sn.statements.get(0));
+			}
+			else if(sn.isDoWhileStatement())
+			{
+				for(int i = 0; i < sn.expressions.size(); i++)
+					sn.expressions.set(i, simplifyExpression(sn.expressions.get(i)));
+				if(sn.statements != null)
+					sn.statements.forEach(CompilerCore::simplifyNodes);
+			}
 		}
 		else if(node instanceof VariableDecNode)
 		{
@@ -273,9 +298,9 @@ public class CompilerCore
 					case POSITIVE:
 						return il;
 					case DECREMENT:
-						return simplifyExpression(new BinaryExpression(ue.expr, BinaryOp.SUBTRACT_ASSIGN, new IntLiteral(1, false)));
+						throw new CompilationException("Cannot decrement an integer literal");
 					case INCREMENT:
-						return simplifyExpression(new BinaryExpression(ue.expr, BinaryOp.ADD_ASSIGN, new IntLiteral(1, false)));
+						throw new CompilationException("Cannot increment an integer literal");
 					case NOT:
 						throw new CompilationException("Cannot perform boolean negation on integer");
 					default:
@@ -292,9 +317,9 @@ public class CompilerCore
 					case POSITIVE:
 						return fl;
 					case DECREMENT:
-						return simplifyExpression(new BinaryExpression(ue.expr, BinaryOp.SUBTRACT_ASSIGN, new FloatLiteral(1.0D, false)));
+						throw new CompilationException("Cannot decrement an integer literal");
 					case INCREMENT:
-						return simplifyExpression(new BinaryExpression(ue.expr, BinaryOp.ADD_ASSIGN, new FloatLiteral(1.0D, false)));
+						throw new CompilationException("Cannot increment an integer literal");
 					case UNARY_NEGATE:
 						throw new CompilationException("Cannot perform unary negation on floating point number");
 					case NOT:
@@ -351,6 +376,7 @@ public class CompilerCore
 				}
 				throw new CompilationException("Unknown literal expression of class: " + expr.getClass());
 			}
+			// TODO add conversion of unary operators for other types
 			throw new CompilationException("Cannot perform unary operator on expression of class: " + expr.getClass());
 		}
 		else if(expression instanceof BinaryExpression)
@@ -941,6 +967,10 @@ public class CompilerCore
 				return Arrays.stream(((PrimaryExpression.FunctionCallExpression) expr).parameters).map(CompilerCore::findParallelAssign).anyMatch(b -> b);
 			if(expr instanceof PrimaryExpression.InstantiationExpression)
 				return Arrays.stream(((PrimaryExpression.InstantiationExpression) expr).parameters).map(CompilerCore::findParallelAssign).anyMatch(b -> b);
+			if(expr instanceof PrimaryExpression.ArrayInstantiationExpression)
+				return Arrays.stream(((PrimaryExpression.ArrayInstantiationExpression) expr).dimensionSizes).map(CompilerCore::findParallelAssign).anyMatch(b -> b);
+			if(expr instanceof LiteralExpression)
+				return false;
 			
 			throw new CompilationException("Unknown primary expression of type " + expr.getClass());
 		}

@@ -4,6 +4,8 @@ import java.util.Arrays;
 
 import org.apache.bcel.classfile.Utility;
 
+import org.apache.bcel.generic.BasicType;
+
 import net.tadpole.compiler.exceptions.CompilationException;
 
 public class Type
@@ -83,6 +85,8 @@ public class Type
 	
 	public org.apache.bcel.generic.Type toBCELType()
 	{
+		if(isPrimitive())
+			return BasicType.getType(Utility.getSignature(typeName));
 		try
 		{
 			return org.apache.bcel.generic.Type.getType(Class.forName(typeName));
