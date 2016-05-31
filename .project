@@ -18,7 +18,7 @@
 		<link>
 			<name>antlr4</name>
 			<type>2</type>
-			<location>/Users/student/Documents/workspace_eclipse/Tadpole Compiler Parser/target/generated-sources/antlr4</location>
+			<locationURI>WORKSPACE_LOC/Tadpole%20Compiler%20Parser/target/generated-sources/antlr4</locationURI>
 		</link>
 	</linkedResources>
 </projectDescription>
